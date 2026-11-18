@@ -77,17 +77,17 @@ function colony(random=Math.random){
     }
     fields.clear();
   }
+  function clearSegment(from,to){
+    if(!walls.size)return true;
+    const dx=to.x-from.x,dy=to.y-from.y,length=Math.hypot(dx,dy);
+    for(let t=.35;t<length;t+=.5){
+      if(!openGround(from.x+dx*t/length,from.y+dy*t/length))return false;
+    }
+    return openGround(to.x,to.y);
+  }
   // A reverse distance field is shared by workers heading for the same place.
   function routeTo(ant,goal,dt){
-    const dx=goal.x-ant.x,dy=goal.y-ant.y;
-    const length=Math.hypot(dx,dy);
-    let clear=true;
-    if(walls.size){
-      for(let t=.45;t<length;t+=.7){
-        if(!openGround(ant.x+dx*t/length,ant.y+dy*t/length)){clear=false;break;}
-      }
-    }
-    if(clear){aim(ant,goal.x,goal.y,dt);return;}
+    if(clearSegment(ant,goal)){aim(ant,goal.x,goal.y,dt);return;}
     const dest=tile(goal.x,goal.y),here=tile(ant.x,ant.y);
     if(here===dest){aim(ant,goal.x,goal.y,dt);return;}
     let distance=fields.get(dest);
@@ -144,7 +144,49 @@ function colony(random=Math.random){
     trailX[i]+=accepted*dx;
     trailY[i]+=accepted*dy;
   }
+  function recordLandmark(ant){
+    const path=ant.homeward,last=path[path.length-1];
+    if(last && Math.hypot(last.x-ant.x,last.y-ant.y)<3)return;
+    const point={x:ant.x,y:ant.y};
+    // Erase loops from the worker's own walk before committing it to memory.
+    const seen=path.findIndex(p=>Math.hypot(p.x-point.x,p.y-point.y)<2);
+    if(seen>=0)path.length=seen;
+    if(path.length<128)path.push(point);
+  }
+  function finishTrip(ant){
+    ant.deliveries++;
+    ant.visits=ant.learnedSource===ant.memory?ant.visits+1:1;
+    ant.learnedSource=ant.memory;
+    ant.route=ant.homeward.reverse();
+    ant.homeward=null;
+    ant.urge=time+30+Math.min(ant.visits,5)*12;
+    const fidelity=.65+.27*(1-Math.exp(-ant.visits/1.8));
+    ant.cursor=random()<fidelity?0:ant.route.length;
+    ant.searchUntil=0;
+  }
+  function recall(ant,dt){
+    if(!ant.memory || ant.memory.amount<=0 || time>=ant.urge || ant.cursor>=ant.route.length)return false;
+    let point=ant.route[ant.cursor];
+    if(Math.hypot(point.x-ant.x,point.y-ant.y)<2.2){
+      point=ant.route[++ant.cursor];
+      if(!point)return false;
+    }
+    if(!clearSegment(ant,point)){
+      if(!ant.searchUntil)ant.searchUntil=time+2;
+      if(time>=ant.searchUntil){
+        ant.cursor=ant.route.length;ant.searchUntil=0;return false;
+      }
+      ant.activity='Cherche un détour';
+      ant.a+=dt*(1.5+Math.sin(time+ant.phase))*(ant.id%2?1:-1);
+      return true;
+    }
+    ant.searchUntil=0;
+    ant.activity='Reprend son chemin appris';
+    aim(ant,point.x,point.y,dt);
+    return true;
+  }
   function markReturn(ant,oldX,oldY,step){
+    recordLandmark(ant);
     ant.tripDistance+=step;
     const i=cell(ant.x,ant.y);
     if(!permeable[i])return;
@@ -153,7 +195,8 @@ function colony(random=Math.random){
     const length=Math.min(step,1.6-marked);
     if(length<=0)return;
     ant.tripMarks.set(i,marked+length);
-    const dose=.92*length*Math.exp(-ant.tripDistance/markingRange);
+    const trafficFactor=.35+.65/(1+ant.encounters*.42);
+    const dose=.92*length*Math.exp(-ant.tripDistance/markingRange)*trafficFactor;
     deposit(i,dose,(oldX-ant.x)/step,(oldY-ant.y)/step);
   }
   function readTrail(ant){
@@ -194,6 +237,7 @@ function colony(random=Math.random){
       const x=NEST.x+r*Math.cos(t),y=NEST.y+r*Math.sin(t);
       if(!openGround(x,y)||!clearBody(x,y,nearby(x,y)))continue;
       const ant={id:ants.length+1,activity:'Explore',x,y,a:t,load:false,memory:null,urge:0,
+        route:[],cursor:0,deliveries:0,visits:0,encounters:0,contacts:new Set(),
         stride:random()*TAU,phase:random()*TAU,pace:5.4+random()*1.2,passSide:0};
       leaveNest(ant);
       ants.push(ant);buckets[bucket(x,y)].add(ant);return true;
@@ -225,7 +269,7 @@ function colony(random=Math.random){
         ant.activity='Rapporte une graine';
         routeTo(ant,NEST,dt);
         if(dist<=dropRadius){
-          reserve++;ant.load=false;ant.tripMarks=null;leaveNest(ant);
+          reserve++;ant.load=false;ant.tripMarks=null;finishTrip(ant);leaveNest(ant);
         }
       }else if(ant.exit && dist<exitRadius && time<ant.exit.until){
         ant.activity='Libère l’entrée du nid';
@@ -237,18 +281,14 @@ function colony(random=Math.random){
           ant.activity='Rejoint des graines';
           routeTo(ant,target,dt);
           if(Math.hypot(ant.x-target.x,ant.y-target.y)<1.5 && (!walls.size || tile(ant.x,ant.y)===tile(target.x,target.y))){
-            ant.load=true;ant.tripDistance=0;ant.tripMarks=new Map();
+            ant.load=true;ant.homeward=[{x:ant.x,y:ant.y}];ant.tripDistance=0;ant.tripMarks=new Map();
             ant.memory=target;ant.urge=time+32;
             // Connect the seed pile to the actual pickup point (up to 1.5 units).
             const dx=target.x-ant.x,dy=target.y-ant.y,len=Math.hypot(dx,dy)||1;
             for(let t=0;t<=1;t+=.5)deposit(cell(ant.x+t*dx,ant.y+t*dy),.35,dx/len,dy/len);
             if(--target.amount===0)food.splice(food.indexOf(target),1);
           }
-        }else if(ant.memory && ant.memory.amount>0 && time<ant.urge){
-          ant.activity='Retourne à une source mémorisée';
-          routeTo(ant,ant.memory,dt);
-        }
-        else{
+        }else if(!recall(ant,dt)){
           const following=dist>=trailStart && scent[cell(ant.x,ant.y)]>.07;
           const turn=dist>=trailStart?readTrail(ant):0;
           ant.activity=following||Math.abs(turn)>.02?'Suit une piste':'Explore';
@@ -261,11 +301,19 @@ function colony(random=Math.random){
       }
       const local=nearby(ant.x,ant.y);
       const forwardX=Math.cos(ant.a),forwardY=Math.sin(ant.a);
+      ant.encounters*=Math.exp(-dt/4);
+      for(const previous of ant.contacts){
+        if(Math.hypot(previous.x-ant.x,previous.y-ant.y)>2.9)ant.contacts.delete(previous);
+      }
       let avoidance=0;
       for(const other of local){
         if(other===ant)continue;
         const dx=other.x-ant.x,dy=other.y-ant.y;
         const ahead=dx*forwardX+dy*forwardY,side=dy*forwardX-dx*forwardY;
+        if(ahead>0 && dx*dx+dy*dy<2.35**2 && !ant.contacts.has(other)){
+          ant.contacts.add(other);
+          ant.encounters=Math.min(10,ant.encounters+1);
+        }
         if(ahead>0 && ahead<3.6 && Math.abs(side)<spacing+.25){
           // Head-on workers both keep right. Otherwise turn away from the neighbour.
           const sign=Math.abs(side)<.4?1:-Math.sign(side);
@@ -484,7 +532,9 @@ function draw(){
     const at=relief?project(selected.x,selected.y):{x:selected.x*sx,y:selected.y*sy};
     ctx.beginPath();ctx.arc(at.x,at.y,Math.max(2*u,9*field.width/field.clientWidth),0,TAU);
     ctx.strokeStyle='#71351d';ctx.lineWidth=Math.max(1,u*.35);ctx.stroke();
-    const label='Ouvrière '+selected.id+' · '+selected.activity;
+    const trips=selected.deliveries===1?'1 livraison':selected.deliveries+' livraisons';
+    const traffic=selected.load && selected.encounters>=1?' · Marquage réduit':'';
+    const label='Ouvrière '+selected.id+' · '+selected.activity+' · '+trips+traffic;
     if(get('observer').textContent!==label)get('observer').textContent=label;
   }
   const eggs=world.brood.filter(b=>b.age<9).length;
