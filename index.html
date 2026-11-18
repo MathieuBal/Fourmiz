@@ -105,14 +105,27 @@ function colony(random=Math.random){
     const point=center(next);
     aim(ant,point.x,point.y,dt);
   }
+  const dropRadius=5.2, exitRadius=8.2;
+  function leaveNest(ant){
+    const radial=Math.atan2(ant.y-NEST.y,ant.x-NEST.x);
+    const heading=radial+(random()-.5)*.65;
+    ant.exit=null;
+    for(const turn of [0,.6,-.6,1.2,-1.2,Math.PI]){
+      const x=NEST.x+Math.cos(heading+turn)*(exitRadius+1);
+      const y=NEST.y+Math.sin(heading+turn)*(exitRadius+1);
+      if(!openGround(x,y))continue;
+      ant.exit={x,y,until:time+4};break;
+    }
+  }
   function spawn(){
     const angle=random()*TAU;
     for(let n=0;n<100;n++){
-      const r=.75*Math.sqrt(n),t=angle+n*2.39996;
+      const r=Math.sqrt(12+n*.8),t=angle+n*2.39996;
       const x=NEST.x+r*Math.cos(t),y=NEST.y+r*Math.sin(t);
       if(!openGround(x,y)||!clearBody(x,y,nearby(x,y)))continue;
       const ant={id:ants.length+1,activity:'Explore',x,y,a:t,load:false,memory:null,urge:0,
-        stride:random()*TAU,phase:random()*TAU,pace:5.4+random()*1.2,blocked:0};
+        stride:random()*TAU,phase:random()*TAU,pace:5.4+random()*1.2,passSide:0};
+      leaveNest(ant);
       ants.push(ant);buckets[bucket(x,y)].add(ant);return true;
     }
     return false;
@@ -126,7 +139,7 @@ function colony(random=Math.random){
   }
   function cell(x,y){return clamp(Math.floor(x),0,W-1)+W*clamp(Math.floor(y),0,H-1)}
   function aim(ant,x,y,dt){
-    if(ant.blocked>0)return;
+
     const bend=Math.min(1,Math.hypot(x-ant.x,y-ant.y)/6)*.27*Math.sin(time*1.35+ant.phase);
     const delta=Math.atan2(y-ant.y,x-ant.x)+bend-ant.a;
     ant.a+=clamp(Math.atan2(Math.sin(delta),Math.cos(delta)),-5*dt,5*dt);
@@ -142,8 +155,14 @@ function colony(random=Math.random){
         scent[cell(ant.x,ant.y)]=Math.min(4,scent[cell(ant.x,ant.y)]+dt*2);
         ant.activity='Rapporte une graine';
         routeTo(ant,NEST,dt);
-        if(dist<2){reserve++;ant.load=false;}
+        if(dist<=dropRadius){
+          reserve++;ant.load=false;leaveNest(ant);
+        }
+      }else if(ant.exit && dist<exitRadius && time<ant.exit.until){
+        ant.activity='Libère l’entrée du nid';
+        routeTo(ant,ant.exit,dt);
       }else{
+        ant.exit=null;
         const target=food.find(f=>Math.hypot(ant.x-f.x,ant.y-f.y)<5);
         if(target){
           ant.activity='Rejoint des graines';
@@ -182,13 +201,22 @@ function colony(random=Math.random){
         }
       }
       ant.a+=clamp(avoidance,-1,1)*dt*5.8;
-      if(ant.blocked>0)ant.a+=dt*5.8;
+
       const step=dt*ant.pace*(1-.28*Math.min(1,Math.abs(avoidance)));
-      const nx=ant.x+Math.cos(ant.a)*step,ny=ant.y+Math.sin(ant.a)*step;
-      if(!openGround(nx,ny)||!clearBody(nx,ny,local,ant)){
-        ant.blocked=.34;continue;
+      // Try a short sideways step when the forward lane is occupied. Keep
+      // the same passing side until the worker can advance freely again.
+      let nx,ny,found=false;
+      const side=ant.passSide || (ant.id%2===0?1:-1);
+      const angles=[0,.52*side,-.52*side,1.05*side,-1.05*side,1.58*side,-1.58*side,2.35*side,-2.35*side,Math.PI];
+      for(const offset of angles){
+        const heading=ant.a+offset;
+        nx=ant.x+Math.cos(heading)*step;ny=ant.y+Math.sin(heading)*step;
+        if(!openGround(nx,ny)||!clearBody(nx,ny,local,ant))continue;
+        ant.a+=clamp(offset,-6*dt,6*dt);
+        if(offset)ant.passSide=Math.sign(offset);
+        found=true;break;
       }
-      ant.blocked=Math.max(0,ant.blocked-dt);
+      if(!found)continue;
       const old=bucket(ant.x,ant.y),next=bucket(nx,ny);
       if(old!==next){buckets[old].delete(ant);buckets[next].add(ant);}
       ant.x=nx;ant.y=ny;ant.stride=(ant.stride+step*4.4)%TAU;
