@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#19251f"><title>Fourmiz · La colonie</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#19251f;color:#f8f3e5;font:16px/1.4 "DM Sans",system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:clamp(12px,3vw,32px)}header,.tools,.stats,.legend{display:flex;align-items:center;flex-wrap:wrap;gap:9px}header{justify-content:space-between;margin-bottom:14px}h1{font:normal clamp(36px,6vw,62px)/1 Georgia,serif;letter-spacing:-.055em;margin:0}.stats{margin:0;gap:16px}.stats div{display:grid}.stats dt{font-size:.76rem;color:#bed0bc}.stats dd{margin:0;font:600 1.3rem system-ui;font-variant-numeric:tabular-nums}figure{margin:0}canvas{display:block;width:100%;height:clamp(300px,56svh,580px);background:#e3d4ad;border-radius:18px;touch-action:manipulation;cursor:crosshair}button{color:inherit;background:#293a30;border:1px solid #59695b;min-height:44px;padding:8px 13px;border-radius:12px;font:inherit;cursor:pointer}button[aria-pressed=true]{background:#c8df98;color:#19251f;border-color:#c8df98}button:focus-visible{outline:3px solid #f5cd70;outline-offset:2px}.tools{margin-top:12px}.legend{font-size:.86rem;color:#c8d3c4;margin-top:8px}.legend span{display:flex;align-items:center;gap:5px}.legend i{width:10px;height:10px;border-radius:50%}.nest{background:#bd7744}.food{background:#94b34f}.trail{background:#47a48f}p{margin:12px 0 0;color:#dde4d6;font-size:.94rem}
+@media(max-width:520px){main{padding:12px}header{align-items:end}.stats{gap:10px}.stats dt{font-size:.68rem}.stats dd{font-size:1.05rem}canvas{height:53svh}.tools{gap:6px}button{padding-inline:10px;font-size:.9rem}}
+</style>
+<main><header><h1>Fourmiz</h1><dl class="stats"><div><dt>Fourmis</dt><dd id="population"></dd></div><div><dt>Réserve</dt><dd id="reserve"></dd></div><div><dt>Œufs</dt><dd id="eggs"></dd></div><div><dt>Larves</dt><dd id="larvae"></dd></div></dl></header>
+<figure><canvas id="field" aria-label="Terrain de la colonie. Touche le sol pour y déposer de la nourriture.">Simulation de colonie de fourmis.</canvas>
+<figcaption class="legend"><span><i class="nest"></i>Nid</span><span><i class="food"></i>Nourriture</span><span><i class="trail"></i>Phéromones</span></figcaption></figure>
+<div class="tools"><button id="feed">+ Nourriture</button><button id="trails" aria-pressed="true">Pistes</button><button id="pause">Pause</button><button id="speed" aria-label="Vitesse de simulation">Vitesse ×1</button></div>
+<p>Touche le terrain pour déposer des graines. Suis les ouvrières jusqu’au nid pour voir comment leurs récoltes nourrissent les larves.</p><p role="status" id="status"></p></main>
+<script>
+// World coordinates are independent of screen pixels and simulation speed.
+const W=100,H=70,NEST={x:38,y:39},TAU=Math.PI*2,STEP=1/30;
+const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
+function colony(random=Math.random){
+  const ants=[], food=[], brood=[], scent=new Float32Array(W*H);
+  let reserve=8,time=0,nextEgg=8,decay=0;
+  function spawn(){
+    ants.push({x:NEST.x,y:NEST.y,a:random()*TAU,load:false,memory:null,urge:0});
+  }
+  function seeds(x,y,amount=25){
+    const old=food.find(f=>Math.hypot(x-f.x,y-f.y)<4);
+    if(old)old.amount+=amount;
+    else food.push({x,y,amount});
+  }
+  function cell(x,y){return clamp(Math.floor(x),0,W-1)+W*clamp(Math.floor(y),0,H-1)}
+  function aim(ant,x,y,dt){
+    const delta=Math.atan2(y-ant.y,x-ant.x)-ant.a;
+    ant.a+=clamp(Math.atan2(Math.sin(delta),Math.cos(delta)),-5*dt,5*dt);
+  }
+  for(let i=0;i<32;i++)spawn();
+  seeds(51,35,44);seeds(75,19,75);seeds(23,17,60);
+  function tick(dt){
+    time+=dt;decay+=dt;
+    if(decay>=0.5){const fade=Math.exp(-decay/17);for(let i=0;i<scent.length;i++)scent[i]*=fade;decay=0;}
+    for(const ant of ants){
+      const dist=Math.hypot(ant.x-NEST.x,ant.y-NEST.y);
+      if(ant.load){
+        scent[cell(ant.x,ant.y)]=Math.min(4,scent[cell(ant.x,ant.y)]+dt*2);
+        aim(ant,NEST.x,NEST.y,dt);
+        if(dist<2){reserve++;ant.load=false;ant.a+=Math.PI;}
+      }else{
+        const target=food.find(f=>Math.hypot(ant.x-f.x,ant.y-f.y)<5);
+        if(target){
+          aim(ant,target.x,target.y,dt);
+          if(Math.hypot(ant.x-target.x,ant.y-target.y)<1.5){
+            ant.load=true;ant.memory=target;ant.urge=time+32;ant.a+=Math.PI;
+            if(--target.amount===0)food.splice(food.indexOf(target),1);
+          }
+        }else if(ant.memory && ant.memory.amount>0 && time<ant.urge)aim(ant,ant.memory.x,ant.memory.y,dt);
+        else{
+          let best=0,turn=0;
+          for(const offset of [0,-0.65,0.65]){
+            const x=ant.x+3*Math.cos(ant.a+offset),y=ant.y+3*Math.sin(ant.a+offset);
+            // Follow outbound trail segments, away from the entrance.
+            const strength=scent[cell(x,y)];
+            if(strength>best && Math.hypot(x-NEST.x,y-NEST.y)>dist){turn=offset;best=strength;}
+          }
+          ant.a+=turn*dt*4+(random()-.5)*Math.sqrt(dt)*2.5;
+        }
+      }
+      ant.x+=Math.cos(ant.a)*dt*6;ant.y+=Math.sin(ant.a)*dt*6;
+      if(ant.x<1||ant.x>W-1){ant.a=Math.PI-ant.a;ant.x=clamp(ant.x,1,W-1);}
+      if(ant.y<1||ant.y>H-1){ant.a=-ant.a;ant.y=clamp(ant.y,1,H-1);}
+    }
+    if(time>=nextEgg){
+      nextEgg=time+8;
+      if(reserve>=2 && ants.length+brood.length<180){reserve--;brood.push({age:0});}
+    }
+    for(let i=brood.length-1;i>=0;i--){
+      const b=brood[i];b.age+=dt;
+      if(b.age>=22 && reserve>=2){reserve-=2;spawn();brood.splice(i,1);}
+    }
+  }
+  return {ants,food,brood,scent,seeds,tick,get reserve(){return reserve}};
+}
+</script>
+<script>
+const get=id=>document.getElementById(id),field=get('field'),ctx=field.getContext('2d'),world=colony();
+let paused=false,speed=1,showTrails=true,last=null,elapsed=0,backdrop;
+function resize(){
+  const r=field.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);
+  field.width=Math.max(1,Math.round(r.width*d));field.height=Math.max(1,Math.round(r.height*d));
+  backdrop=document.createElement('canvas');backdrop.width=field.width;backdrop.height=field.height;
+  const b=backdrop.getContext('2d'),g=b.createRadialGradient(field.width*.4,field.height*.55,0,field.width*.4,field.height*.55,field.width);
+  g.addColorStop(0,'#ede1bb');g.addColorStop(1,'#c9bc94');b.fillStyle=g;b.fillRect(0,0,field.width,field.height);
+  let seed=731;const rand=()=>((seed=seed*16807%2147483647)/2147483647);
+  for(let i=0;i<1800;i++){b.fillStyle=i%4?'#5b513317':'#fff5cf77';b.beginPath();b.arc(rand()*field.width,rand()*field.height,(.3+rand())*d,0,TAU);b.fill();}
+  draw();
+}
+function dot(x,y,r,color){ctx.beginPath();ctx.arc(x,y,r,0,TAU);ctx.fillStyle=color;ctx.fill();}
+function draw(){
+  ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(backdrop,0,0);
+  const sx=field.width/W,sy=field.height/H,u=Math.min(sx,sy);
+  if(showTrails){
+    ctx.fillStyle='#197c71';
+    for(let i=0;i<world.scent.length;i++){const v=world.scent[i];if(v<.06)continue;
+      ctx.globalAlpha=Math.min(.58,v*.22);ctx.fillRect((i%W)*sx,Math.floor(i/W)*sy,sx+.2,sy+.2);}
+    ctx.globalAlpha=1;
+  }
+  const nx=NEST.x*sx,ny=NEST.y*sy;
+  for(const [r,c] of [[4.6,'#a18456'],[3.6,'#c69b62'],[2.6,'#97693f'],[1.7,'#392f23']])dot(nx,ny,r*u,c);
+  for(const f of world.food){const n=Math.min(19,Math.ceil(f.amount/3));
+    for(let j=0;j<n;j++){const a=j*2.4,r=Math.sqrt(j)*.46*u;
+      dot(f.x*sx+Math.cos(a)*r,f.y*sy+Math.sin(a)*r,.57*u,j%2?'#67833a':'#435d2e');}}
+  for(const ant of world.ants){
+    ctx.save();ctx.translate(ant.x*sx,ant.y*sy);ctx.rotate(Math.atan2(Math.sin(ant.a)*sy,Math.cos(ant.a)*sx));ctx.scale(u,u);
+    ctx.strokeStyle='#513628';ctx.lineWidth=.12;ctx.beginPath();
+    for(const s of [-1,1])for(const x of [-.36,0,.36]){ctx.moveTo(x,0);ctx.lineTo(x+.16,s*.45);ctx.lineTo(x-.08,s*.66);}
+    ctx.stroke();dot(-.49,0,.35,'#473326');dot(.02,0,.24,'#79503b');dot(.47,0,.28,'#3d3028');if(ant.load)dot(.84,0,.25,'#749632');ctx.restore();
+  }
+  const eggs=world.brood.filter(b=>b.age<9).length;
+  for(const [id,n] of [['population',world.ants.length],['reserve',world.reserve],['eggs',eggs],['larvae',world.brood.length-eggs]]){
+    if(get(id).textContent!==String(n))get(id).textContent=n;
+  }
+}
+function frame(now){
+  if(last!==null&&!paused){elapsed+=Math.min((now-last)/1000,.12)*speed;
+    while(elapsed>=STEP){world.tick(STEP);elapsed-=STEP;}}
+  last=now;if(!paused)draw();requestAnimationFrame(frame);
+}
+function add(x,y){world.seeds(clamp(x,2,W-2),clamp(y,2,H-2));get('status').textContent='25 graines déposées.';draw();}
+field.addEventListener('pointerup',e=>{const r=field.getBoundingClientRect();add((e.clientX-r.left)/r.width*W,(e.clientY-r.top)/r.height*H);});
+get('feed').onclick=()=>add(8+Math.random()*84,8+Math.random()*54);
+get('pause').onclick=()=>{paused=!paused;get('pause').textContent=paused?'Reprendre':'Pause';last=null;};
+get('speed').onclick=()=>{speed=speed===4?1:speed*2;get('speed').textContent='Vitesse ×'+speed;};
+get('trails').onclick=()=>{showTrails=!showTrails;get('trails').setAttribute('aria-pressed',String(showTrails));draw();};
+document.addEventListener('visibilitychange',()=>{last=null;});
+new ResizeObserver(resize).observe(field);resize();requestAnimationFrame(frame);
+</script></html>
