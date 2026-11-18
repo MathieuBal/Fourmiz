@@ -9,13 +9,13 @@
 <main><header><h1>Fourmiz</h1><dl class="stats"><div><dt>Fourmis</dt><dd id="population"></dd></div><div><dt>Réserve</dt><dd id="reserve"></dd></div><div><dt>Œufs</dt><dd id="eggs"></dd></div><div><dt>Larves</dt><dd id="larvae"></dd></div></dl></header>
 <figure><canvas id="field" aria-label="Terrain de la colonie. Choisis un outil sous le terrain.">Simulation de colonie de fourmis.</canvas>
 <figcaption class="legend"><span><i class="nest"></i>Nid</span><span><i class="food"></i>Nourriture</span><span><i class="trail"></i>Phéromones</span></figcaption></figure>
-<div class="tools" role="group" aria-label="Outils de terrain"><button data-tool="seeds" aria-pressed="true">Graines</button><button data-tool="wall" aria-pressed="false">Mur</button><button data-tool="erase" aria-pressed="false">Gomme</button><button data-tool="follow" aria-pressed="false">Suivre</button></div>
+<div class="tools" role="group" aria-label="Outils de terrain"><button data-tool="seeds" aria-pressed="true">Graines</button><button data-tool="wall" aria-pressed="false">Mur</button><button data-tool="erase" aria-pressed="false">Gomme</button><button data-tool="pan" aria-pressed="false">Déplacer la vue</button><button data-tool="follow" aria-pressed="false">Suivre</button></div>
 <p id="hint">Touche le sol pour déposer des graines.</p><p id="observer" hidden></p>
-<div class="tools"><button id="feed">+ Nourriture</button><button id="relief" aria-pressed="true">Vue 3D</button><button id="trails" aria-pressed="true">Pistes</button><button id="pause">Pause</button><button id="speed" aria-label="Vitesse de simulation">Vitesse ×1</button></div>
+<div class="tools"><button id="feed">+ Nourriture</button><button id="zoom">Zoom ×2</button><button id="relief" aria-pressed="true">Vue 3D</button><button id="trails" aria-pressed="true">Pistes</button><button id="pause">Pause</button><button id="speed" aria-label="Vitesse de simulation">Vitesse ×1</button></div>
 <p role="status" id="status"></p></main>
 <script>
 // World coordinates are independent of screen pixels and simulation speed.
-const W=100,H=70,NEST={x:38,y:39},TAU=Math.PI*2,STEP=1/30;
+const W=200,H=140,NEST={x:88,y:74},TAU=Math.PI*2,STEP=1/30;
 const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
 function colony(random=Math.random){
   const ants=[], food=[], brood=[], scent=new Float32Array(W*H);
@@ -259,7 +259,8 @@ function colony(random=Math.random){
     ant.a+=clamp(Math.atan2(Math.sin(delta),Math.cos(delta)),-5*dt,5*dt);
   }
   for(let i=0;i<32;i++)spawn();
-  seeds(51,35,44);seeds(75,19,75);seeds(23,17,60);
+  seeds(NEST.x+13,NEST.y-4,44);
+  seeds(148,39,110);seeds(43,104,80);seeds(168,112,90);
   function tick(dt){
     time+=dt;decay+=dt;
     if(decay>=.5){ageTrails(decay);decay=0;}
@@ -361,6 +362,15 @@ const get=id=>document.getElementById(id),field=get('field'),ctx=field.getContex
 let paused=false,speed=1,showTrails=true,last=null,elapsed=0,backdrop;
 let tool='seeds',selected=null,stroke=null;
 let relief=true, landscape;
+const camera={zoom:2,x:.5,y:.5};
+function centerView(x,y){
+  const edge=.5/camera.zoom;
+  camera.x=clamp(x,edge,1-edge);camera.y=clamp(y,edge,1-edge);
+}
+function focusNest(){
+  const point=relief?project(NEST.x,NEST.y):{x:NEST.x*field.width/W,y:NEST.y*field.height/H};
+  centerView(point.x/field.width,point.y/field.height);
+}
 function project(x,y,z=0){
   const depth=y/H, scale=1/(1.22-.22*depth);
   const elevation=Math.min(field.width/W,field.height/H)*scale;
@@ -404,7 +414,7 @@ function buildLandscape(){
     ellipse(c,p.x,p.y,size,size*.52,i%3?'#8359332b':'#fff2c981');
   }
   // Fold each leaf along a raised midrib to catch the light on one side.
-  for(const [x,y,length,angle] of [[6,5,7,.7],[12,4,5,2.4],[92,8,6,2.6],[94,59,5,-2.3],[5,60,6,-.65],[9,62,4,-2.15]]){
+  for(const [x,y,length,angle] of [[6,5,7,.7],[12,4,5,2.4],[W-8,8,6,2.6],[W-6,H-11,5,-2.3],[5,H-10,6,-.65],[9,H-8,4,-2.15]]){
     const leaf=(t,w,z)=>[x+length*t*Math.cos(angle)-w*Math.sin(angle),
       y+length*t*Math.sin(angle)+w*Math.cos(angle),z];
     const root=leaf(0,0,0),tip=leaf(1,0,.3),ridge=leaf(.54,0,1);
@@ -505,7 +515,7 @@ function resize(){
 }
 function dot(x,y,r,color){ctx.beginPath();ctx.arc(x,y,r,0,TAU);ctx.fillStyle=color;ctx.fill();}
 function draw(){
-  ctx.setTransform(1,0,0,1,0,0);
+  ctx.setTransform(camera.zoom,0,0,camera.zoom,field.width*(.5-camera.x*camera.zoom),field.height*(.5-camera.y*camera.zoom));
   const sx=field.width/W,sy=field.height/H,u=Math.min(sx,sy);
   if(relief)drawRelief();
   else {
@@ -552,10 +562,11 @@ function add(x,y){
   get('status').textContent=ok?'25 graines déposées.':'Choisis du terrain libre.';
   draw();
 }
-const hints={seeds:'Touche le sol pour déposer des graines.',wall:'Glisse le doigt pour tracer un mur.',erase:'Glisse sur un mur pour ouvrir un passage.',follow:'Touche une ouvrière pour suivre son activité.'};
+const hints={pan:'Glisse pour déplacer la vue agrandie.',seeds:'Touche le sol pour déposer des graines.',wall:'Glisse le doigt pour tracer un mur.',erase:'Glisse sur un mur pour ouvrir un passage.',follow:'Touche une ouvrière pour suivre son activité.'};
 for(const button of document.querySelectorAll('[data-tool]')){
   button.onclick=()=>{
     tool=button.dataset.tool;
+    if(tool==='pan' && camera.zoom===1)setZoom(2);
     for(const other of document.querySelectorAll('[data-tool]'))other.setAttribute('aria-pressed',String(other===button));
     get('hint').textContent=hints[tool];get('status').textContent='';
     if(tool!=='follow'){selected=null;get('observer').hidden=true;}
@@ -564,12 +575,14 @@ for(const button of document.querySelectorAll('[data-tool]')){
 }
 function position(e){
   const r=field.getBoundingClientRect();
+  const u=((e.clientX-r.left)/r.width-.5)/camera.zoom+camera.x;
+  const v=((e.clientY-r.top)/r.height-.5)/camera.zoom+camera.y;
   if(relief){
-    const t=((e.clientY-r.top)/r.height-.11)/.77;
+    const t=(v-.11)/.77;
     const depth=1.22*t/(1+.22*t);
-    return {x:W*(.5+((e.clientX-r.left)/r.width-.5)*(1.22-.22*depth)/.96),y:H*depth};
+    return {x:W*(.5+(u-.5)*(1.22-.22*depth)/.96),y:H*depth};
   }
-  return {x:clamp((e.clientX-r.left)*W/r.width,0,W-.01),y:clamp((e.clientY-r.top)*H/r.height,0,H-.01)};
+  return {x:u*W,y:v*H};
 }
 function drag(to){
   const from=stroke.point,steps=Math.max(1,Math.ceil(Math.hypot(to.x-from.x,to.y-from.y)*2));
@@ -580,16 +593,25 @@ function drag(to){
 }
 field.addEventListener('pointerdown',e=>{
   if(!e.isPrimary || e.button!==0 || stroke)return;
+  if(tool==='pan'){
+    stroke={id:e.pointerId,x:e.clientX,y:e.clientY};field.setPointerCapture(e.pointerId);return;
+  }
   const p=position(e);
   if(p.x<0||p.x>=W||p.y<0||p.y>=H)return;
   stroke={id:e.pointerId,point:p};field.setPointerCapture(e.pointerId);
   if(tool==='wall'||tool==='erase')drag(p);
 });
 field.addEventListener('pointermove',e=>{
+  if(stroke?.id===e.pointerId && tool==='pan'){
+    const r=field.getBoundingClientRect();
+    centerView(camera.x+(stroke.x-e.clientX)/r.width/camera.zoom,camera.y+(stroke.y-e.clientY)/r.height/camera.zoom);
+    stroke.x=e.clientX;stroke.y=e.clientY;draw();return;
+  }
   if(stroke?.id===e.pointerId && (tool==='wall'||tool==='erase'))drag(position(e));
 });
 field.addEventListener('pointerup',e=>{
   if(stroke?.id!==e.pointerId)return;
+  if(tool==='pan'){stroke=null;return;}
   const p=position(e);
   if(p.x<0||p.x>=W||p.y<0||p.y>=H){stroke=null;return;}
   if(tool==='wall'||tool==='erase')drag(p);
@@ -599,7 +621,7 @@ field.addEventListener('pointerup',e=>{
     for(const ant of world.ants){
       const screen=relief?project(ant.x,ant.y):{x:ant.x*field.width/W,y:ant.y*field.height/H};
       const box=field.getBoundingClientRect();
-      const d=Math.hypot(screen.x*box.width/field.width+box.left-e.clientX,screen.y*box.height/field.height+box.top-e.clientY);
+      const d=Math.hypot(((screen.x/field.width-camera.x)*camera.zoom+.5)*box.width+box.left-e.clientX,((screen.y/field.height-camera.y)*camera.zoom+.5)*box.height+box.top-e.clientY);
       if(d<best){best=d;selected=ant;}
     }
     get('observer').hidden=!selected;
@@ -609,11 +631,18 @@ field.addEventListener('pointerup',e=>{
   stroke=null;
 });
 field.addEventListener('lostpointercapture',e=>{if(stroke?.id===e.pointerId)stroke=null;});
-get('feed').onclick=()=>add(8+Math.random()*84,8+Math.random()*54);
+get('feed').onclick=()=>add(8+Math.random()*(W-16),8+Math.random()*(H-16));
 get('pause').onclick=()=>{paused=!paused;get('pause').textContent=paused?'Reprendre':'Pause';last=null;};
 get('speed').onclick=()=>{speed=speed===4?1:speed*2;get('speed').textContent='Vitesse ×'+speed;};
+function setZoom(value){
+  camera.zoom=value;
+  if(value===1)centerView(.5,.5);else focusNest();
+  get('zoom').textContent=value===1?'Vue entière':'Zoom ×2';
+  draw();
+}
+get('zoom').onclick=()=>setZoom(camera.zoom===1?2:1);
 get('relief').onclick=()=>{relief=!relief;get('relief').setAttribute('aria-pressed',String(relief));draw();};
 get('trails').onclick=()=>{showTrails=!showTrails;get('trails').setAttribute('aria-pressed',String(showTrails));draw();};
 document.addEventListener('visibilitychange',()=>{last=null;});
-new ResizeObserver(resize).observe(field);resize();requestAnimationFrame(frame);
+new ResizeObserver(resize).observe(field);resize();focusNest();draw();requestAnimationFrame(frame);
 </script></html>
