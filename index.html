@@ -5,10 +5,13 @@
 <style>
 *{box-sizing:border-box}body{margin:0;background:#19251f;color:#f8f3e5;font:16px/1.4 "DM Sans",system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:clamp(12px,3vw,32px)}header,.tools,.stats,.legend{display:flex;align-items:center;flex-wrap:wrap;gap:9px}header{justify-content:space-between;margin-bottom:14px}h1{font:normal clamp(36px,6vw,62px)/1 Georgia,serif;letter-spacing:-.055em;margin:0}.stats{margin:0;gap:16px}.stats div{display:grid}.stats dt{font-size:.76rem;color:#bed0bc}.stats dd{margin:0;font:600 1.3rem system-ui;font-variant-numeric:tabular-nums}figure{margin:0}canvas{display:block;width:100%;height:clamp(300px,56svh,580px);background:#e3d4ad;border-radius:18px;touch-action:none;cursor:crosshair}button{color:inherit;background:#293a30;border:1px solid #59695b;min-height:44px;padding:8px 13px;border-radius:12px;font:inherit;cursor:pointer}button[aria-pressed=true]{background:#c8df98;color:#19251f;border-color:#c8df98}button:focus-visible{outline:3px solid #f5cd70;outline-offset:2px}.tools{margin-top:12px}.legend{font-size:.86rem;color:#c8d3c4;margin-top:8px}.legend span{display:flex;align-items:center;gap:5px}.legend i{width:10px;height:10px;border-radius:50%}.nest{background:#bd7744}.food{background:#94b34f}.trail{background:#47a48f}p{margin:12px 0 0;color:#dde4d6;font-size:.94rem}
 @media(max-width:520px){main{padding:12px}header{align-items:end}.stats{gap:10px}.stats dt{font-size:.68rem}.stats dd{font-size:1.05rem}canvas{height:53svh}.tools{gap:6px}button{padding-inline:10px;font-size:.9rem}}
+#underground{position:absolute;inset:0 0 auto;background:#332b24;color:#fff3d6;border-radius:18px;padding:10px;height:clamp(300px,56svh,580px);overflow:auto}#underground .tools{margin:0}#underground canvas{width:100%;height:calc(100% - 95px);background:#332b24;border-radius:0;cursor:default}#underground p{font-size:.85rem;margin:2px}#mapKey{font-size:.85rem;margin:4px 0}@media(max-width:520px){#underground{height:53svh}}
 </style>
 <main><header><h1>Fourmiz</h1><dl class="stats"><div><dt>Fourmis</dt><dd id="population"></dd></div><div><dt>Réserve</dt><dd id="reserve"></dd></div><div><dt>Œufs</dt><dd id="eggs"></dd></div><div><dt>Larves</dt><dd id="larvae"></dd></div></dl></header>
-<figure><canvas id="field" aria-label="Terrain de la colonie. Choisis un outil sous le terrain.">Simulation de colonie de fourmis.</canvas>
-<figcaption class="legend"><span><i class="nest"></i>Nid</span><span><i class="food"></i>Nourriture</span><span><i class="trail"></i>Phéromones</span></figcaption></figure>
+<div class="tools"><button id="territory" aria-pressed="false">Territoires</button><button id="cut">Coupe du nid</button></div>
+<p id="mapKey" hidden>Ocre et bleu · passages récents. Violet · zone partagée. Croix · rencontre agressive.</p>
+<figure style="position:relative"><canvas id="field" aria-label="Terrain de la colonie. Choisis un outil sous le terrain.">Simulation de colonie de fourmis.</canvas>
+<section id="underground" hidden aria-label="Coupe de la fourmilière"><div class="tools"><button id="ochre">Nid ocre</button><button id="blue">Nid bleu</button><button id="surface">Surface ↑</button></div><canvas id="sectionView" width="720" height="420" aria-label="Chambres du nid"></canvas><p id="chambers"></p></section><figcaption class="legend"><span><i class="nest"></i>Nid</span><span><i class="food"></i>Nourriture</span><span><i class="trail"></i>Phéromones</span></figcaption></figure>
 <div class="tools" role="group" aria-label="Outils de terrain"><button data-tool="seeds" aria-pressed="true">Graines</button><button data-tool="wall" aria-pressed="false">Mur</button><button data-tool="erase" aria-pressed="false">Gomme</button><button data-tool="pan" aria-pressed="false">Déplacer la vue</button><button data-tool="follow" aria-pressed="false">Suivre</button></div>
 <p id="hint">Touche le sol pour déposer des graines.</p><p id="observer" hidden></p>
 <div class="tools"><button id="watch" hidden>Voir une confrontation</button><button id="feed">+ Nourriture</button><button id="zoom">Zoom ×2</button><button id="relief" aria-pressed="true">Vue 3D</button><button id="trails" aria-pressed="true">Pistes</button><button id="pause">Pause</button><button id="speed" aria-label="Vitesse de simulation">Vitesse ×1</button></div>
@@ -19,10 +22,13 @@ const duel=new URLSearchParams(location.search).get('duel')!=='0';
 const W=duel?320:200,H=duel?180:140,NEST={x:88,y:74},TAU=Math.PI*2,STEP=1/30;
 const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
 const nests=duel?[{x:50,y:90},{x:270,y:90}]:[NEST];
+const territoryCols=Math.ceil(W/4),territoryRows=Math.ceil(H/4);
+const encountersOnMap=[];
 const ground={food:[],walls:new Set(),buckets:null,wallListeners:[]};
 function colony(random=Math.random,team=0){
   const NEST=nests[team];
   const ants=[], food=ground.food, brood=[], scent=new Float32Array(W*H);
+  const visits=new Float32Array(territoryCols*territoryRows);
   const deaths={âge:0,faim:0,combat:0};
   let nextId=1,consumed=0,nextMeal=1;
   let reserve=8,time=0,nextEgg=8,decay=0;
@@ -340,6 +346,8 @@ function colony(random=Math.random,team=0){
     // P. californicus field encounters: 81% showed aggression (doi:10.2307/1936610).
     if(random()>=.81)return false;
     clashes++;
+    encountersOnMap.push({x:(ant.x+rival.x)/2,y:(ant.y+rival.y)/2,time});
+    if(encountersOnMap.length>80)encountersOnMap.shift();
     // Fraction escalating to a struggle and durations are simulation parameters.
     const grapple=random()<.35;
     for(const [worker,opponent] of [[ant,rival],[rival,ant]]){
@@ -387,7 +395,12 @@ function colony(random=Math.random,team=0){
   function tick(dt){
     time+=dt;decay+=dt;
     renewFood();
-    if(time>=nextMeal){nextMeal++;feedColony();}
+    if(time>=nextMeal){nextMeal++;feedColony();
+      for(let i=0;i<visits.length;i++)visits[i]*=.967;
+      for(const a of ants)if(!a.inside){
+        const i=Math.floor(a.x/4)+territoryCols*Math.floor(a.y/4);
+        visits[i]=Math.min(24,visits[i]+1);
+      }}
     for(let i=ants.length-1;i>=0;i--){
       const a=ants[i];
       if(a.fatalAt<=time)removeWorker(i,'combat');
@@ -494,7 +507,7 @@ function colony(random=Math.random,team=0){
       }
     }
   }
-  return {ants,food,brood,deaths,get consumed(){return consumed},scent,seeds,tick,walls,paint,center,get clashes(){return clashes},get time(){return time},get reserve(){return reserve}};
+  return {ants,food,brood,visits,deaths,get consumed(){return consumed},scent,seeds,tick,walls,paint,center,get clashes(){return clashes},get time(){return time},get reserve(){return reserve}};
 }
 </script>
 <script>
@@ -604,6 +617,77 @@ const trailLayer=document.createElement('canvas');
 trailLayer.width=W;trailLayer.height=H;
 const trailContext=trailLayer.getContext('2d'),trailPixels=trailContext.createImageData(W,H);
 let lastTrailPaint=-Infinity;
+let territory=false,nestView=null,paintedSecond=-1;
+const heat=document.createElement('canvas');
+heat.width=territoryCols;heat.height=territoryRows;
+const heatCtx=heat.getContext('2d'),heatPixels=heatCtx.createImageData(heat.width,heat.height);
+function drawTerritory(perspective){
+  if(!territory)return;
+  if(paintedSecond!==Math.floor(world.time)){
+    paintedSecond=Math.floor(world.time);
+    for(let i=0;i<world.visits.length;i++){
+      const a=world.visits[i],b=rival?.visits[i]||0,j=i*4;
+      const shared=Math.min(a,b)>.25*Math.max(a,b);
+      const rgb=shared?[138,59,145]:a>b?[190,95,28]:[31,106,168];
+      heatPixels.data.set(rgb,j);
+      heatPixels.data[j+3]=155*Math.min(1,(a+b)/3);
+    }
+    heatCtx.putImageData(heatPixels,0,0);
+  }
+  if(perspective){
+    for(let y=0;y<heat.height;y++){
+      const l=project(0,y*4),r=project(W,Math.min(H,y*4+4));
+      ctx.drawImage(heat,0,y,heat.width,1,l.x,l.y,r.x-l.x,r.y-l.y+.25);
+    }
+  }else ctx.drawImage(heat,0,0,field.width,field.height);
+  for(const e of encountersOnMap){
+    if(world.time-e.time>18)continue;
+    const p=perspective?project(e.x,e.y):{x:e.x/W*field.width,y:e.y/H*field.height};
+    const r=3*field.width/field.clientWidth/camera.zoom;
+    ctx.strokeStyle='#922d28';ctx.lineWidth=r/2;ctx.beginPath();
+    ctx.moveTo(p.x-r,p.y-r);ctx.lineTo(p.x+r,p.y+r);
+    ctx.moveTo(p.x-r,p.y+r);ctx.lineTo(p.x+r,p.y-r);ctx.stroke();
+  }
+}
+function showNest(team){
+  nestView=team;get('underground').hidden=team===null;
+  get('blue').hidden=!rival;
+  for(const [i,id] of ['ochre','blue'].entries())get(id).setAttribute('aria-pressed',String(i===team));
+  if(team!==null)drawNest();else get('cut').focus();
+}
+function drawNest(){
+  const c=colonies[nestView],eggs=c.brood.filter(b=>b.age<9).length;
+  const rooms=[
+    [180,140,'Grenier',Math.floor(c.reserve),'#c3a05c'],
+    [520,140,'Œufs',eggs,'#fff2dc'],
+    [180,310,'Larves',c.brood.length-eggs,'#e7cbbb'],
+    [520,310,'En récupération',c.ants.filter(a=>a.inside).length,nestView?'#7cb9de':'#d58a55']
+  ];
+  const g=get('sectionView').getContext('2d');
+  g.fillStyle='#674733';g.fillRect(0,0,720,420);
+  g.fillStyle='#859055';g.fillRect(0,0,720,13);
+  g.strokeStyle='#35291f';g.lineWidth=22;g.lineCap='round';g.beginPath();
+  g.moveTo(345,0);g.bezierCurveTo(300,90,430,185,345,329);
+  for(const [x,y] of rooms){g.moveTo(358,y-40);g.quadraticCurveTo(x,y-75,x,y);}
+  g.stroke();
+  for(const [x,y,label,n,color] of rooms){
+    ellipse(g,x,y,147,65,'#382b22',0);
+    for(let k=0;k<Math.min(24,n);k++){
+      const dx=(k%8-3.5)*19,dy=Math.floor(k/8)*9;
+      ellipse(g,x+dx,y+9+dy,7,3.4,color,k%2?.25:-.25);
+    }
+    g.fillStyle='#ffecd1';g.textAlign='center';g.font='bold 23px system-ui';g.fillText(label+' · '+n,x,y-9);
+  }
+  const info=(nestView?'Bleue':'Ocre')+' · '+rooms.map(r=>r[2]+' '+r[3]).join(' · ');
+  if(get('chambers').textContent!==info)get('chambers').textContent=info;
+}
+get('territory').onclick=()=>{
+  territory=!territory;get('territory').setAttribute('aria-pressed',String(territory));
+  get('mapKey').hidden=!territory;draw();
+};
+get('cut').onclick=()=>showNest(nestView===null?0:null);
+get('ochre').onclick=()=>showNest(0);get('blue').onclick=()=>showNest(1);
+get('surface').onclick=()=>showNest(null);
 function drawTrails(perspective){
   if(world.time-lastTrailPaint>=.12){
     const pixels=trailPixels.data;
@@ -637,6 +721,7 @@ function combatPose(a){
 }
 function drawRelief(){
   ctx.drawImage(landscape,0,0);
+  drawTerritory(true);
   if(showTrails)drawTrails(true);
   const objects=nests.map((n,team)=>({y:n.y,draw:()=>mound(n,team)}));
   for(const i of world.walls)objects.push({y:world.center(i).y,draw:()=>stone(i)});
@@ -696,6 +781,7 @@ get('watch').onclick=()=>{
   draw();
 };
 function draw(){
+  if(nestView!==null)drawNest();
   const contacts=duel?world.ants.filter(a=>a.opponent && !a.opponent.cause):[];
   if(awaitingContact && contacts.length)showEncounter(contacts[0]);
   ctx.setTransform(camera.zoom,0,0,camera.zoom,field.width*(.5-camera.x*camera.zoom),field.height*(.5-camera.y*camera.zoom));
@@ -703,6 +789,7 @@ function draw(){
   if(relief)drawRelief();
   else {
   ctx.drawImage(backdrop,0,0);
+  drawTerritory(false);
   if(showTrails)drawTrails(false);
   for(const i of world.walls){
     const p=world.center(i);ctx.fillStyle='#645e50';
@@ -818,7 +905,10 @@ field.addEventListener('pointerup',e=>{
   const p=position(e);
   if(p.x<0||p.x>=W||p.y<0||p.y>=H){stroke=null;return;}
   if(tool==='wall'||tool==='erase')drag(p);
-  else if(tool==='seeds')add(p.x,p.y);
+  else if(tool==='seeds'){
+    const nid=nests.findIndex(n=>Math.hypot(n.x-p.x,n.y-p.y)<5);
+    if(nid>=0)showNest(nid);else add(p.x,p.y);
+  }
   else{
     let best=24;selected=null;
     for(const ant of workers()){
