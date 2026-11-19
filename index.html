@@ -12,7 +12,7 @@
 <div class="tools" role="group" aria-label="Outils de terrain"><button data-tool="seeds" aria-pressed="true">Graines</button><button data-tool="wall" aria-pressed="false">Mur</button><button data-tool="erase" aria-pressed="false">Gomme</button><button data-tool="pan" aria-pressed="false">Déplacer la vue</button><button data-tool="follow" aria-pressed="false">Suivre</button></div>
 <p id="hint">Touche le sol pour déposer des graines.</p><p id="observer" hidden></p>
 <div class="tools"><button id="feed">+ Nourriture</button><button id="zoom">Zoom ×2</button><button id="relief" aria-pressed="true">Vue 3D</button><button id="trails" aria-pressed="true">Pistes</button><button id="pause">Pause</button><button id="speed" aria-label="Vitesse de simulation">Vitesse ×1</button></div>
-<p><a id="mode" style="color:#d1e69f" href="?duel=1">Jouer avec deux colonies</a></p><p id="rivalStats" hidden></p><p role="status" id="status"></p></main>
+<p><a id="mode" style="color:#d1e69f" href="?duel=1">Jouer avec deux colonies</a></p><p id="vitalStats"></p><p id="rivalStats" hidden></p><p role="status" id="status"></p></main>
 <script>
 // World coordinates are independent of screen pixels and simulation speed.
 const W=200,H=140,NEST={x:88,y:74},TAU=Math.PI*2,STEP=1/30;
@@ -23,6 +23,8 @@ const ground={food:[],walls:new Set(),buckets:null,wallListeners:[]};
 function colony(random=Math.random,team=0){
   const NEST=nests[team];
   const ants=[], food=ground.food, brood=[], scent=new Float32Array(W*H);
+  const deaths={âge:0,faim:0,combat:0};
+  let nextId=1,consumed=0,nextMeal=1;
   let reserve=8,time=0,nextEgg=8,decay=0;
   const cols=W/2, rows=H/2, walls=ground.walls, fields=new Map();
   const radius=.88, spacing=2*radius, bucketSize=4;
@@ -237,13 +239,15 @@ function colony(random=Math.random,team=0){
       ant.exit={x,y,until:time+4};break;
     }
   }
-  function spawn(){
+  function spawn(founder=false){
     const angle=random()*TAU;
     for(let n=0;n<100;n++){
       const r=Math.sqrt(12+n*.8),t=angle+n*2.39996;
       const x=NEST.x+r*Math.cos(t),y=NEST.y+r*Math.sin(t);
       if(!openGround(x,y)||!clearBody(x,y,nearby(x,y)))continue;
-      const ant={team,restUntil:0,id:ants.length+1,activity:'Explore',x,y,a:t,load:false,memory:null,urge:0,
+      const lifespan=190+random()*190;
+      const ant={expires:time+lifespan*(founder?1-.9*random():1),hunger:0,endurance:24+36*random(),
+        team,restUntil:0,id:nextId++,activity:'Explore',x,y,a:t,load:false,memory:null,urge:0,
         route:[],cursor:0,deliveries:0,visits:0,encounters:0,contacts:new Set(),
         stride:random()*TAU,phase:random()*TAU,pace:5.4+random()*1.2,passSide:0};
       leaveNest(ant);
@@ -265,7 +269,7 @@ function colony(random=Math.random,team=0){
     const delta=Math.atan2(y-ant.y,x-ant.x)+bend-ant.a;
     ant.a+=clamp(Math.atan2(Math.sin(delta),Math.cos(delta)),-5*dt,5*dt);
   }
-  for(let i=0;i<32;i++)spawn();
+  for(let i=0;i<32;i++)spawn(true);
   seeds(NEST.x+(team?-13:13),NEST.y-4,44);
   if(!duel){seeds(148,39,110);seeds(43,104,80);seeds(168,112,90);}
   else if(team===0){seeds(100,70,160);seeds(100,30,60);seeds(100,110,60);}
@@ -297,14 +301,51 @@ function colony(random=Math.random,team=0){
       for(const worker of [ant,rival]){
         worker.fightUntil=time+.85;worker.returning=true;
       }
+      // 7% of all observed encounters were fatal, not 7% of struggles.
+      if(random()<.07/(.81*.35)){
+        const victim=random()<.5?ant:rival;
+        victim.fatalAt=victim.fightUntil;
+      }
       ant.activity='Lutte au contact';return 'pause';
     }
     ant.a=Math.atan2(ant.y-rival.y,ant.x-rival.x);
     rival.a=ant.a+Math.PI;
     ant.activity='Écarte une rivale';return 'move';
   }
+  function removeWorker(index,cause){
+    const ant=ants[index];
+    ant.cause=cause;deaths[cause]++;
+    buckets[bucket(ant.x,ant.y)].delete(ant);
+    if(ant.load)seeds(ant.x,ant.y,1);
+    ants.splice(index,1);
+    if(!ants.length)brood.length=0;
+  }
+  // A seed represents divisible food. Rates and times are compressed for the demo.
+  function feedColony(){
+    const larvae=brood.filter(b=>b.age>=9).length;
+    const demand=ants.length*.016+larvae*.12;
+    const ration=demand?Math.min(1,reserve/demand):0;
+    const meal=Math.min(demand,reserve);
+    reserve-=meal;consumed+=meal;
+    for(const ant of ants)ant.hunger=Math.max(0,ant.hunger+1-2*ration);
+    for(let i=brood.length-1;i>=0;i--){
+      const b=brood[i];
+      if(b.age<9){b.age++;continue;}
+      b.hunger=Math.max(0,b.hunger+1-2*ration);
+      if(b.hunger>=18){brood.splice(i,1);continue;}
+      b.age+=ration;
+      if(b.age>=22 && spawn())brood.splice(i,1);
+    }
+  }
   function tick(dt){
     time+=dt;decay+=dt;
+    if(time>=nextMeal){nextMeal++;feedColony();}
+    for(let i=ants.length-1;i>=0;i--){
+      const a=ants[i];
+      if(a.fatalAt<=time)removeWorker(i,'combat');
+      else if(a.hunger>=a.endurance)removeWorker(i,'faim');
+      else if(time>=a.expires)removeWorker(i,'âge');
+    }
     if(decay>=.5){ageTrails(decay);decay=0;}
     for(const ant of ants){
       const dist=Math.hypot(ant.x-NEST.x,ant.y-NEST.y);
@@ -356,7 +397,7 @@ function colony(random=Math.random,team=0){
       const forwardX=Math.cos(ant.a),forwardY=Math.sin(ant.a);
       ant.encounters*=Math.exp(-dt/4);
       for(const previous of ant.contacts){
-        if(Math.hypot(previous.x-ant.x,previous.y-ant.y)>2.9)ant.contacts.delete(previous);
+        if(previous.cause || Math.hypot(previous.x-ant.x,previous.y-ant.y)>2.9)ant.contacts.delete(previous);
       }
       let avoidance=0;
       for(const other of local){
@@ -399,14 +440,12 @@ function colony(random=Math.random,team=0){
     }
     if(time>=nextEgg){
       nextEgg=time+8;
-      if(reserve>=2 && ants.length+brood.length<180){reserve--;brood.push({age:0});}
-    }
-    for(let i=brood.length-1;i>=0;i--){
-      const b=brood[i];b.age+=dt;
-      if(b.age>=22 && reserve>=2 && spawn()){reserve-=2;brood.splice(i,1);}
+      if(ants.length && reserve>=2+ants.length*.12 && ants.length+brood.length<180){
+        reserve--;consumed++;brood.push({age:0,hunger:0});
+      }
     }
   }
-  return {ants,food,brood,scent,seeds,tick,walls,paint,center,get clashes(){return clashes},get time(){return time},get reserve(){return reserve}};
+  return {ants,food,brood,deaths,get consumed(){return consumed},scent,seeds,tick,walls,paint,center,get clashes(){return clashes},get time(){return time},get reserve(){return reserve}};
 }
 </script>
 <script>
@@ -601,6 +640,10 @@ function draw(){
     ctx.stroke();dot(-.49,0,.35,ant.team?'#246785':'#473326');dot(.02,0,.24,'#79503b');dot(.47,0,.28,'#3d3028');if(ant.load)dot(.84,0,.25,'#749632');ctx.restore();
   }
   }
+  if(selected?.cause){
+    get('observer').textContent='Ouvrière '+selected.id+' morte ('+selected.cause+').';
+    selected=null;
+  }
   if(selected){
     const at=relief?project(selected.x,selected.y):{x:selected.x*sx,y:selected.y*sy};
     ctx.beginPath();ctx.arc(at.x,at.y,Math.max(2*u,9*field.width/field.clientWidth),0,TAU);
@@ -610,9 +653,14 @@ function draw(){
     const label='Ouvrière '+(duel?(selected.team?'bleue ':'ocre '):'')+selected.id+' · '+selected.activity+' · '+trips+traffic;
     if(get('observer').textContent!==label)get('observer').textContent=label;
   }
-  if(rival)get('rivalStats').textContent='Ocre · '+world.ants.length+' fourmis · '+world.reserve+' graines | Bleue · '+rival.ants.length+' fourmis · '+rival.reserve+' graines | '+(world.clashes+rival.clashes)+' rencontres agressives';
+  const vital=colonies.map((c,i)=>{
+    const d=c.deaths;
+    return (duel?(i?'Bleue · ':'Ocre · '):'')+Math.floor(c.consumed)+' graines consommées · pertes par âge '+d.âge+', faim '+d.faim+', combat '+d.combat;
+  }).join(' | ');
+  if(get('vitalStats').textContent!==vital)get('vitalStats').textContent=vital;
+  if(rival)get('rivalStats').textContent='Ocre · '+world.ants.length+' fourmis · '+Math.floor(world.reserve)+' graines | Bleue · '+rival.ants.length+' fourmis · '+Math.floor(rival.reserve)+' graines | '+(world.clashes+rival.clashes)+' rencontres agressives';
   const eggs=world.brood.filter(b=>b.age<9).length;
-  for(const [id,n] of [['population',world.ants.length],['reserve',world.reserve],['eggs',eggs],['larvae',world.brood.length-eggs]]){
+  for(const [id,n] of [['population',world.ants.length],['reserve',Math.floor(world.reserve)],['eggs',eggs],['larvae',world.brood.length-eggs]]){
     if(get(id).textContent!==String(n))get(id).textContent=n;
   }
 }
