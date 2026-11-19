@@ -11,14 +11,14 @@
 <figcaption class="legend"><span><i class="nest"></i>Nid</span><span><i class="food"></i>Nourriture</span><span><i class="trail"></i>Phéromones</span></figcaption></figure>
 <div class="tools" role="group" aria-label="Outils de terrain"><button data-tool="seeds" aria-pressed="true">Graines</button><button data-tool="wall" aria-pressed="false">Mur</button><button data-tool="erase" aria-pressed="false">Gomme</button><button data-tool="pan" aria-pressed="false">Déplacer la vue</button><button data-tool="follow" aria-pressed="false">Suivre</button></div>
 <p id="hint">Touche le sol pour déposer des graines.</p><p id="observer" hidden></p>
-<div class="tools"><button id="feed">+ Nourriture</button><button id="zoom">Zoom ×2</button><button id="relief" aria-pressed="true">Vue 3D</button><button id="trails" aria-pressed="true">Pistes</button><button id="pause">Pause</button><button id="speed" aria-label="Vitesse de simulation">Vitesse ×1</button></div>
+<div class="tools"><button id="watch" hidden>Voir une confrontation</button><button id="feed">+ Nourriture</button><button id="zoom">Zoom ×2</button><button id="relief" aria-pressed="true">Vue 3D</button><button id="trails" aria-pressed="true">Pistes</button><button id="pause">Pause</button><button id="speed" aria-label="Vitesse de simulation">Vitesse ×1</button></div>
 <p><a id="mode" style="color:#d1e69f" href="?duel=1">Jouer avec deux colonies</a></p><p id="vitalStats"></p><p id="rivalStats" hidden></p><p role="status" id="status"></p></main>
 <script>
 // World coordinates are independent of screen pixels and simulation speed.
-const W=200,H=140,NEST={x:88,y:74},TAU=Math.PI*2,STEP=1/30;
-const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
 const duel=new URLSearchParams(location.search).get('duel')==='1';
-const nests=duel?[{x:55,y:70},{x:145,y:70}]:[NEST];
+const W=duel?320:200,H=duel?180:140,NEST={x:88,y:74},TAU=Math.PI*2,STEP=1/30;
+const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
+const nests=duel?[{x:50,y:90},{x:270,y:90}]:[NEST];
 const ground={food:[],walls:new Set(),buckets:null,wallListeners:[]};
 function colony(random=Math.random,team=0){
   const NEST=nests[team];
@@ -272,12 +272,26 @@ function colony(random=Math.random,team=0){
   for(let i=0;i<32;i++)spawn(true);
   seeds(NEST.x+(team?-13:13),NEST.y-4,44);
   if(!duel){seeds(148,39,110);seeds(43,104,80);seeds(168,112,90);}
-  else if(team===0){seeds(100,70,160);seeds(100,30,60);seeds(100,110,60);}
+  else if(team===0){seeds(160,90,160);seeds(106,72,75);seeds(214,108,75);}
   let clashes=0;
   function encounter(ant,local,dt){
-    if(ant.fightUntil>time){
-      ant.activity='Lutte au contact';return 'pause';
+    const opponent=ant.opponent;
+    if(opponent){
+      if(!opponent.cause && time<ant.displayUntil){
+        ant.a=Math.atan2(opponent.y-ant.y,opponent.x-ant.x);
+        ant.activity='Menace mandibules ouvertes';return 'pause';
+      }
+      if(!opponent.cause && time<ant.fightUntil){
+        ant.a=Math.atan2(opponent.y-ant.y,opponent.x-ant.x);
+        ant.activity='Lutte au contact';return 'pause';
+      }
+      ant.opponent=null;
+      if(!ant.returning){
+        ant.a=Math.atan2(ant.y-opponent.y,ant.x-opponent.x);
+        ant.withdrawUntil=time+.7;
+      }
     }
+    if(time<ant.withdrawUntil){ant.activity='Rompt le contact';return 'move';}
     if(ant.returning){
       ant.activity='Se replie vers son nid';
       if(Math.hypot(ant.x-NEST.x,ant.y-NEST.y)>dropRadius){
@@ -297,20 +311,23 @@ function colony(random=Math.random,team=0){
     if(random()>=.81)return false;
     clashes++;
     // Fraction escalating to a struggle and durations are simulation parameters.
-    if(random()<.35){
+    const grapple=random()<.35;
+    for(const [worker,opponent] of [[ant,rival],[rival,ant]]){
+      worker.opponent=opponent;worker.displayUntil=time+1.25;
+      worker.a=Math.atan2(opponent.y-worker.y,opponent.x-worker.x);
+      worker.activity='Menace mandibules ouvertes';
+    }
+    if(grapple){
       for(const worker of [ant,rival]){
-        worker.fightUntil=time+.85;worker.returning=true;
+        worker.fightUntil=time+3.8;worker.returning=true;
       }
       // 7% of all observed encounters were fatal, not 7% of struggles.
       if(random()<.07/(.81*.35)){
         const victim=random()<.5?ant:rival;
         victim.fatalAt=victim.fightUntil;
       }
-      ant.activity='Lutte au contact';return 'pause';
     }
-    ant.a=Math.atan2(ant.y-rival.y,ant.x-rival.x);
-    rival.a=ant.a+Math.PI;
-    ant.activity='Écarte une rivale';return 'move';
+    return 'pause';
   }
   function removeWorker(index,cause){
     const ant=ants[index];
@@ -453,6 +470,7 @@ const get=id=>document.getElementById(id),field=get('field'),ctx=field.getContex
 const colonies=rival?[world,rival]:[world];
 function workers(){return rival?world.ants.concat(rival.ants).filter(a=>!a.inside):world.ants;}
 if(rival){
+  get('watch').hidden=false;
   get('mode').href=location.pathname;get('mode').textContent='Revenir à une colonie';
   get('rivalStats').hidden=false;
   document.querySelector('.stats dt').textContent='Fourmis ocres';
@@ -570,6 +588,21 @@ function drawTrails(perspective){
     ctx.drawImage(trailLayer,0,row,W,1,left.x,left.y,right.x-left.x,right.y-left.y+.3);
   }
 }
+// Body-local animation: hold the threat pose, then surge and twist at contact.
+function combatPose(a){
+  if(!a.opponent)return;
+  const fighting=world.time>=a.displayUntil && a.fightUntil>world.time;
+  const beat=Math.sin(world.time*(fighting?13:5)+a.team);
+  ctx.translate((fighting?.35:.12)*beat,0);
+  ctx.rotate((fighting?.24:.09)*beat);
+  const gape=fighting?.18+.12*beat:.48;
+  ctx.strokeStyle='#37241b';ctx.lineWidth=.18;ctx.beginPath();
+  for(const side of [-1,1]){
+    ctx.moveTo(.64,.14*side);ctx.lineTo(1.04,(.2+gape)*side);
+    ctx.lineTo(1.38,(.08+gape*.65)*side);
+  }
+  ctx.stroke();
+}
 function drawRelief(){
   ctx.drawImage(landscape,0,0);
   if(showTrails)drawTrails(true);
@@ -588,6 +621,7 @@ function drawRelief(){
     ctx.save();ctx.translate(p.x,p.y);ctx.scale(p.scale,p.scale);
     ellipse(ctx,.36,.46,1.2,.38,'#614c3638',Math.atan2(ahead.y-p.y,ahead.x-p.x));
     ctx.rotate(Math.atan2(ahead.y-p.y,ahead.x-p.x));
+    combatPose(a);
     ctx.strokeStyle='#48372c';ctx.lineWidth=.14;ctx.beginPath();
     for(const side of [-1,1])for(const x of [-.45,0,.45]){
       const swing=.27*Math.sin(a.stride+(x===0?Math.PI:0)+(side<0?Math.PI:0));
@@ -614,7 +648,24 @@ function resize(){
   buildLandscape();draw();
 }
 function dot(x,y,r,color){ctx.beginPath();ctx.arc(x,y,r,0,TAU);ctx.fillStyle=color;ctx.fill();}
+let awaitingContact=false;
+function showEncounter(a){
+  const b=a.opponent,x=(a.x+b.x)/2,y=(a.y+b.y)/2;
+  const p=relief?project(x,y):{x:x/W*field.width,y:y/H*field.height};
+  camera.zoom=6;centerView(p.x/field.width,p.y/field.height);
+  get('zoom').textContent='Vue entière';
+  awaitingContact=false;
+  get('status').textContent='Confrontation centrée.';
+}
+get('watch').onclick=()=>{
+  const active=world.ants.find(a=>a.opponent && !a.opponent.cause);
+  if(active)showEncounter(active);
+  else{awaitingContact=true;get('status').textContent='La vue suivra la prochaine confrontation.';}
+  draw();
+};
 function draw(){
+  const contacts=duel?world.ants.filter(a=>a.opponent && !a.opponent.cause):[];
+  if(awaitingContact && contacts.length)showEncounter(contacts[0]);
   ctx.setTransform(camera.zoom,0,0,camera.zoom,field.width*(.5-camera.x*camera.zoom),field.height*(.5-camera.y*camera.zoom));
   const sx=field.width/W,sy=field.height/H,u=Math.min(sx,sy);
   if(relief)drawRelief();
@@ -635,10 +686,18 @@ function draw(){
       dot(f.x*sx+Math.cos(a)*r,f.y*sy+Math.sin(a)*r,.57*u,j%2?'#67833a':'#435d2e');}}
   for(const ant of workers()){
     ctx.save();ctx.translate(ant.x*sx,ant.y*sy);ctx.rotate(Math.atan2(Math.sin(ant.a)*sy,Math.cos(ant.a)*sx));ctx.scale(u,u);
+    combatPose(ant);
     ctx.strokeStyle='#513628';ctx.lineWidth=.12;ctx.beginPath();
     for(const s of [-1,1])for(const x of [-.36,0,.36]){const swing=.27*Math.sin(ant.stride+(x===0?Math.PI:0)+(s<0?Math.PI:0));ctx.moveTo(x,0);ctx.lineTo(x+.16+swing*.5,s*.45);ctx.lineTo(x-.08+swing,s*.66);}
     ctx.stroke();dot(-.49,0,.35,ant.team?'#246785':'#473326');dot(.02,0,.24,'#79503b');dot(.47,0,.28,'#3d3028');if(ant.load)dot(.84,0,.25,'#749632');ctx.restore();
   }
+  }
+  for(const a of contacts){
+    const x=(a.x+a.opponent.x)/2,y=(a.y+a.opponent.y)/2;
+    const p=relief?project(x,y):{x:x*sx,y:y*sy};
+    const pixel=field.width/field.getBoundingClientRect().width/camera.zoom;
+    ctx.strokeStyle='#a63a22';ctx.lineWidth=1.5*pixel;
+    ctx.beginPath();ctx.arc(p.x,p.y,Math.max(7*pixel,2.2*u)+pixel*Math.sin(world.time*6),0,TAU);ctx.stroke();
   }
   if(selected?.cause){
     get('observer').textContent='Ouvrière '+selected.id+' morte ('+selected.cause+').';
@@ -749,7 +808,7 @@ get('speed').onclick=()=>{speed=speed===4?1:speed*2;get('speed').textContent='Vi
 function setZoom(value){
   camera.zoom=value;
   if(value===1)centerView(.5,.5);else focusNest();
-  get('zoom').textContent=value===1?'Vue entière':'Zoom ×2';
+  get('zoom').textContent=value===1?'Zoom ×2':'Vue entière';
   draw();
 }
 get('zoom').onclick=()=>setZoom(camera.zoom===1?2:1);
