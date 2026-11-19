@@ -15,7 +15,7 @@
 <p><a id="mode" style="color:#d1e69f" href="?duel=1">Jouer avec deux colonies</a></p><p id="vitalStats"></p><p id="rivalStats" hidden></p><p role="status" id="status"></p></main>
 <script>
 // World coordinates are independent of screen pixels and simulation speed.
-const duel=new URLSearchParams(location.search).get('duel')==='1';
+const duel=new URLSearchParams(location.search).get('duel')!=='0';
 const W=duel?320:200,H=duel?180:140,NEST={x:88,y:74},TAU=Math.PI*2,STEP=1/30;
 const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
 const nests=duel?[{x:50,y:90},{x:270,y:90}]:[NEST];
@@ -471,7 +471,7 @@ const colonies=rival?[world,rival]:[world];
 function workers(){return rival?world.ants.concat(rival.ants).filter(a=>!a.inside):world.ants;}
 if(rival){
   get('watch').hidden=false;
-  get('mode').href=location.pathname;get('mode').textContent='Revenir à une colonie';
+  get('mode').href='?duel=0';get('mode').textContent='Revenir à une colonie';
   get('rivalStats').hidden=false;
   document.querySelector('.stats dt').textContent='Fourmis ocres';
   document.querySelector('.legend .nest').parentElement.lastChild.textContent='Nid ocre · Nid bleu';
