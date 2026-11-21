@@ -3,19 +3,43 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#19251f"><title>Fourmiz · La colonie</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#19251f;color:#f8f3e5;font:16px/1.4 "DM Sans",system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:clamp(12px,3vw,32px)}header,.tools,.stats,.legend{display:flex;align-items:center;flex-wrap:wrap;gap:9px}header{justify-content:space-between;margin-bottom:14px}h1{font:normal clamp(36px,6vw,62px)/1 Georgia,serif;letter-spacing:-.055em;margin:0}.stats{margin:0;gap:16px}.stats div{display:grid}.stats dt{font-size:.76rem;color:#bed0bc}.stats dd{margin:0;font:600 1.3rem system-ui;font-variant-numeric:tabular-nums}figure{margin:0}canvas{display:block;width:100%;height:clamp(300px,56svh,580px);background:#e3d4ad;border-radius:18px;touch-action:none;cursor:crosshair}button{color:inherit;background:#293a30;border:1px solid #59695b;min-height:44px;padding:8px 13px;border-radius:12px;font:inherit;cursor:pointer}button[aria-pressed=true]{background:#c8df98;color:#19251f;border-color:#c8df98}button:focus-visible{outline:3px solid #f5cd70;outline-offset:2px}.tools{margin-top:12px}.legend{font-size:.86rem;color:#c8d3c4;margin-top:8px}.legend span{display:flex;align-items:center;gap:5px}.legend i{width:10px;height:10px;border-radius:50%}.nest{background:#bd7744}.food{background:#94b34f}.trail{background:#47a48f}p{margin:12px 0 0;color:#dde4d6;font-size:.94rem}
-@media(max-width:520px){main{padding:12px}header{align-items:end}.stats{gap:10px}.stats dt{font-size:.68rem}.stats dd{font-size:1.05rem}canvas{height:53svh}.tools{gap:6px}button{padding-inline:10px;font-size:.9rem}}
-#underground{position:absolute;inset:0 0 auto;background:#332b24;color:#fff3d6;border-radius:18px;padding:10px;height:clamp(300px,56svh,580px);overflow:auto}#underground .tools{margin:0}#underground canvas{width:100%;height:calc(100% - 95px);background:#332b24;border-radius:0;cursor:default}#underground p{font-size:.85rem;margin:2px}#mapKey{font-size:.85rem;margin:4px 0}@media(max-width:520px){#underground{height:53svh}}
+:root{color-scheme:light;--paper:#f3f1e8;--ink:#21382e;--muted:#526459;--line:#cdd0bf;--panel:#fffef6;--green:#234b39}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.45 "DM Sans",system-ui,sans-serif}
+main{max-width:1240px;margin:auto;padding:20px clamp(12px,3vw,40px) 40px}header,.bar,.buttons,.scene{display:flex;align-items:center;gap:8px}
+header{justify-content:space-between;margin-bottom:16px;border-bottom:1px solid var(--line);padding-bottom:12px}
+h1{font:normal clamp(36px,5vw,58px)/1 Georgia,serif;letter-spacing:-.065em;margin:0}
+h2{font:normal 25px/1.1 Georgia,serif;margin:0 0 14px}p,figure{margin:0}
+.scene,.tool{color:var(--muted);font-size:.84rem;font-weight:650}
+button,select,summary{font:inherit;color:var(--ink);cursor:pointer}button,select{min-height:44px;border:1px solid var(--line);border-radius:9px;padding:7px 11px;background:var(--panel)}
+button[aria-pressed=true]{background:var(--green);color:white;border-color:var(--green)}
+button:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #ae631c;outline-offset:2px}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(238px,290px);align-items:start;gap:16px}
+.stage,.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;min-width:0}
+.bar{justify-content:space-between;flex-wrap:wrap;padding:8px}.buttons{flex-wrap:wrap}
+.bar button{font-size:.87rem;font-weight:620}.views{gap:2px;background:#e9ece0;padding:2px;border-radius:10px}.views button{background:transparent;border-color:transparent}.views button[aria-pressed=true]{background:var(--green)}
+.terrain{position:relative;background:#26392f}#field{display:block;width:100%;height:clamp(300px,57svh,600px);touch-action:none}
+#underground{position:absolute;inset:0;background:#332b24;color:#fff3d6;display:flex;flex-direction:column;padding:10px;gap:6px;overflow:auto}
+#sectionView{display:block;width:100%;height:auto;min-height:95px;flex:1;object-fit:contain}#chambers{font-size:.85rem}
+.inspector,.panel{padding:14px}.tool{display:flex;align-items:center;gap:8px}.tool select{min-width:0;max-width:100%}
+#hint,#mapKey,#status,.detail{color:var(--muted);font-size:.9rem}#hint,#observer,#status:not(:empty),#mapKey,#feed{margin-top:6px}.inspector:has(#observer:not([hidden])) #hint{display:none}
+#observer{border-left:3px solid #ae743c;padding:6px 10px;background:#f4f0df}#observer strong,#observer span{display:block}
+aside{display:grid;gap:12px}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{text-align:right;padding:6px 3px;border-bottom:1px solid var(--line)}th:first-child{text-align:left;font-weight:500}thead th{font-size:.85rem}thead th:nth-child(2){color:#85521e}thead th:nth-child(3){color:#28677c}tbody tr:last-child>*{border:0}
+summary{min-height:44px;align-content:center;font-weight:650}details.panel{padding:0 14px}details[open].panel{padding-bottom:14px}.detail{line-height:1.55}.detail p+p{margin-top:5px}
+[hidden]{display:none!important}
+@media(max-width:820px){.layout{grid-template-columns:1fr}.scene{flex-direction:column;gap:0;align-items:flex-start}main{padding-top:10px}header{margin-bottom:8px;padding-bottom:8px}.bar{gap:4px}.bar button{padding-inline:8px}select{font-size:16px}#field{height:clamp(240px,47svh,480px)}aside{gap:8px}.inspector,.panel{padding:10px 12px}}
+@media(max-width:380px){.bar button{font-size:.8rem;padding-inline:6px}.bar .buttons{gap:2px}}
 </style>
-<main><header><h1>Fourmiz</h1><dl class="stats"><div><dt>Fourmis</dt><dd id="population"></dd></div><div><dt>Réserve</dt><dd id="reserve"></dd></div><div><dt>Œufs</dt><dd id="eggs"></dd></div><div><dt>Larves</dt><dd id="larvae"></dd></div></dl></header>
-<div class="tools"><button id="territory" aria-pressed="false">Territoires</button><button id="cut">Coupe du nid</button></div>
-<p id="mapKey" hidden>Ocre et bleu · passages récents. Violet · zone partagée. Croix · rencontre agressive. Cercle rouge · tensions répétées.</p>
-<figure style="position:relative"><canvas id="field" aria-label="Terrain de la colonie. Choisis un outil sous le terrain.">Simulation de colonie de fourmis.</canvas>
-<section id="underground" hidden aria-label="Coupe de la fourmilière"><div class="tools"><button id="ochre">Nid ocre</button><button id="blue">Nid bleu</button><button id="surface">Surface ↑</button></div><canvas id="sectionView" width="720" height="420" aria-label="Chambres du nid"></canvas><p id="chambers"></p></section><figcaption class="legend"><span><i class="nest"></i>Nid</span><span><i class="food"></i>Nourriture</span><span><i class="trail"></i>Phéromones</span></figcaption></figure>
-<div class="tools" role="group" aria-label="Outils de terrain"><button data-tool="seeds" aria-pressed="true">Graines</button><button data-tool="wall" aria-pressed="false">Mur</button><button data-tool="erase" aria-pressed="false">Gomme</button><button data-tool="pan" aria-pressed="false">Déplacer la vue</button><button data-tool="follow" aria-pressed="false">Suivre</button></div>
-<p id="hint">Touche le sol pour déposer des graines.</p><p id="observer" hidden></p>
-<div class="tools"><button id="watch" hidden>Voir une confrontation</button><button id="feed">+ Nourriture</button><button id="zoom">Zoom ×2</button><button id="relief" aria-pressed="true">Vue 3D</button><button id="trails" aria-pressed="true">Pistes</button><button id="pause">Pause</button><button id="speed" aria-label="Vitesse de simulation">Vitesse ×1</button></div>
-<p><a id="mode" style="color:#d1e69f" href="?duel=1">Jouer avec deux colonies</a> · <a id="entrances" style="color:#d1e69f" href="?duel=1&amp;scene=entrees">Observer deux nids voisins</a></p><p>Des graines réapparaissent près des nids. Après une minute, de nouveaux tas apparaissent aussi sur le terrain.</p><p id="vitalStats"></p><p id="rivalStats" hidden></p><p role="status" id="status"></p></main>
+<main><header><h1>Fourmiz</h1><label class="scene">Simulation<select id="scene"><option value="solo">Colonie seule</option><option value="duel">Duel des colonies</option><option value="entrees">Deux nids voisins</option></select></label></header>
+<div class="layout"><section class="stage" aria-label="Observation en direct">
+<div class="bar"><div class="buttons views" role="group" aria-label="Vue"><button id="surface" aria-pressed="true">Surface</button><button id="cut" aria-pressed="false">Coupe du nid</button></div><div class="buttons" role="group" aria-label="Lecture"><button id="pause">Pause</button><button id="speed" aria-label="Vitesse de simulation ×1">×1</button></div></div>
+<figure class="terrain"><canvas id="field" aria-label="Terrain de la colonie">Simulation de colonie de fourmis.</canvas>
+<section id="underground" hidden aria-label="Coupe de la fourmilière"><div class="buttons" id="nestPicker"><button id="ochre">Nid ocre</button><button id="blue">Nid bleu</button></div><canvas id="sectionView" width="720" height="420" aria-label="Chambres du nid"></canvas><p id="chambers"></p></section></figure>
+<div id="surfaceControls" class="inspector"><label class="tool">Sur le terrain<select id="tool"><optgroup label="Observation"><option value="follow">Suivre une ouvrière</option><option value="pan">Déplacer la vue</option></optgroup><optgroup label="Modifier le terrain"><option value="seeds">Déposer des graines</option><option value="wall">Tracer un mur</option><option value="erase">Effacer un mur</option></optgroup></select></label>
+<button id="feed" hidden>Disperser 25 graines</button><p id="hint">Touche une ouvrière pour suivre son activité.</p><div id="observer" hidden><strong id="workerName"></strong><span id="workerAction"></span><span id="workerReason" class="detail"></span></div><p role="status" id="status"></p>
+<p id="mapKey" hidden>Ocre et bleu · passages récents. Violet · zone partagée. Croix · confrontation. Cercle rouge · tensions répétées.</p></div></section>
+<aside><section class="panel"><h2>Colonies</h2><table aria-label="État des colonies"><thead><tr><th scope="col">Indicateur</th><th scope="col">Ocre</th><th scope="col" class="duelOnly">Bleue</th></tr></thead><tbody><tr><th scope="row">Ouvrières</th><td id="population0"></td><td class="duelOnly" id="population1"></td></tr><tr><th scope="row">Graines en réserve</th><td id="reserve0"></td><td class="duelOnly" id="reserve1"></td></tr><tr><th scope="row">Œufs</th><td id="eggs0"></td><td class="duelOnly" id="eggs1"></td></tr><tr><th scope="row">Larves</th><td id="larvae0"></td><td class="duelOnly" id="larvae1"></td></tr></tbody></table></section>
+<details class="panel" id="display"><summary>Affichage et caméra</summary><div class="buttons"><button id="territory" aria-pressed="false">Territoires</button><button id="trails" aria-pressed="true">Pistes</button><button id="relief" aria-pressed="true">Vue 3D</button><button id="zoom">Zoom ×2</button><button id="watch" hidden>Voir une confrontation</button></div></details>
+<details class="panel"><summary>Bilan de la simulation</summary><div class="detail"><p id="vitalStats"></p><p id="rivalStats" hidden></p></div></details></aside></div></main>
 <script>
 // World coordinates are independent of screen pixels and simulation speed.
 const duel=new URLSearchParams(location.search).get('duel')!=='0';
@@ -729,20 +753,16 @@ function colony(random=Math.random,team=0){
 const get=id=>document.getElementById(id),field=get('field'),ctx=field.getContext('2d'),world=colony(),rival=duel?colony(Math.random,1):null;
 const colonies=rival?[world,rival]:[world];
 function workers(){return (rival?world.ants.concat(rival.ants):world.ants).filter(a=>!a.inside);}
-if(neighboringNests){
-  get('entrances').href='?duel=1';
-  get('entrances').textContent='Retrouver les nids éloignés';
-}
-if(rival){
-  get('watch').hidden=false;
-  get('mode').href='?duel=0';get('mode').textContent='Revenir à une colonie';
-  get('rivalStats').hidden=false;
-  document.querySelector('.stats dt').textContent='Fourmis ocres';
-  document.querySelector('.legend .nest').parentElement.lastChild.textContent='Nid ocre · Nid bleu';
-  document.querySelector('.stats').setAttribute('aria-label','Colonie ocre');
-}
+get('scene').value=neighboringNests?'entrees':duel?'duel':'solo';
+get('scene').onchange=e=>{
+  const searches={solo:'?duel=0',duel:'?duel=1',entrees:'?duel=1&scene=entrees'};
+  location.search=searches[e.target.value];
+};
+for(const cell of document.querySelectorAll('.duelOnly'))cell.hidden=!duel;
+get('watch').hidden=!duel;get('rivalStats').hidden=!duel;
+get('nestPicker').hidden=!duel;
 let paused=false,speed=1,showTrails=true,last=null,elapsed=0,backdrop;
-let tool='seeds',selected=null,stroke=null;
+let tool='follow',selected=null,stroke=null;
 let relief=true, landscape;
 const camera={zoom:neighboringNests?2:duel?1:2,x:.5,y:.5};
 function centerView(x,y){
@@ -885,7 +905,10 @@ function showNest(team){
   nestView=team;get('underground').hidden=team===null;
   get('blue').hidden=!rival;
   for(const [i,id] of ['ochre','blue'].entries())get(id).setAttribute('aria-pressed',String(i===team));
-  if(team!==null)drawNest();else get('cut').focus();
+  get('surface').setAttribute('aria-pressed',String(team===null));
+  get('cut').setAttribute('aria-pressed',String(team!==null));
+  get('surfaceControls').hidden=get('display').hidden=team!==null;
+  if(team!==null){awaitingContact=false;drawNest();}
 }
 function drawNest(){
   const c=colonies[nestView],eggs=c.brood.filter(b=>b.age<9).length;
@@ -924,7 +947,7 @@ get('territory').onclick=()=>{
   territory=!territory;get('territory').setAttribute('aria-pressed',String(territory));
   get('mapKey').hidden=!territory;draw();
 };
-get('cut').onclick=()=>showNest(nestView===null?0:null);
+get('cut').onclick=()=>showNest(nestView??0);
 get('ochre').onclick=()=>showNest(0);get('blue').onclick=()=>showNest(1);
 get('surface').onclick=()=>showNest(null);
 function drawTrails(perspective){
@@ -1014,6 +1037,7 @@ function showEncounter(a){
   get('status').textContent='Confrontation centrée.';
 }
 get('watch').onclick=()=>{
+  selected=null;get('observer').hidden=true;
   const active=world.ants.find(a=>a.opponent && !a.opponent.cause);
   if(active)showEncounter(active);
   else{awaitingContact=true;get('status').textContent='La vue suivra la prochaine confrontation.';}
@@ -1023,6 +1047,10 @@ function draw(){
   if(nestView!==null)drawNest();
   const contacts=duel?world.ants.filter(a=>a.opponent && !a.opponent.cause):[];
   if(awaitingContact && contacts.length)showEncounter(contacts[0]);
+  if(selected && !selected.cause && camera.zoom>1 && nestView===null){
+    const p=relief?project(selected.x,selected.y):{x:selected.x/W*field.width,y:selected.y/H*field.height};
+    centerView(p.x/field.width,p.y/field.height);
+  }
   ctx.setTransform(camera.zoom,0,0,camera.zoom,field.width*(.5-camera.x*camera.zoom),field.height*(.5-camera.y*camera.zoom));
   const sx=field.width/W,sy=field.height/H,u=Math.min(sx,sy);
   if(relief)drawRelief();
@@ -1058,7 +1086,9 @@ function draw(){
     ctx.beginPath();ctx.arc(p.x,p.y,Math.max(7*pixel,2.2*u)+pixel*Math.sin(world.time*6),0,TAU);ctx.stroke();
   }
   if(selected?.cause){
-    get('observer').textContent='Ouvrière '+selected.id+' morte ('+selected.cause+').';
+    get('workerName').textContent='Ouvrière '+selected.id;
+    get('workerAction').textContent='Morte ('+selected.cause+').';
+    get('workerReason').textContent='';
     selected=null;
   }
   if(selected){
@@ -1069,20 +1099,23 @@ function draw(){
     }
     const trips=selected.deliveries===1?'1 livraison':selected.deliveries+' livraisons';
     const traffic=selected.load && selected.encounters>=1?' · Marquage réduit':'';
-    const label='Ouvrière '+(duel?(selected.team?'bleue ':'ocre '):'')+selected.id+' · '+selected.activity+'. '+activityReason[selected.activity]+(selected.patient?' Larve nº '+selected.patient.id+'.':'')+' · '+trips+traffic;
-    if(get('observer').textContent!==label)get('observer').textContent=label;
+    setReading('workerName','Ouvrière '+(duel?(selected.team?'bleue ':'ocre '):'')+selected.id+' · '+trips);
+    setReading('workerAction',selected.activity);
+    setReading('workerReason',activityReason[selected.activity]+(selected.patient?' Larve nº '+selected.patient.id+'.':'')+traffic);
+
   }
-  const vital=colonies.map((c,i)=>{
-    const d=c.deaths;
-    return (duel?(i?'Bleue · ':'Ocre · '):'')+Math.floor(c.consumed)+' graines consommées · pertes par âge '+d.âge+', faim '+d.faim+', combat '+d.combat;
-  }).join(' | ');
-  if(get('vitalStats').textContent!==vital)get('vitalStats').textContent=vital;
-  if(rival)get('rivalStats').textContent='Ocre · '+world.ants.length+' fourmis · '+Math.floor(world.reserve)+' graines | Bleue · '+rival.ants.length+' fourmis · '+Math.floor(rival.reserve)+' graines | '+(world.clashes+rival.clashes)+' rencontres agressives';
-  const eggs=world.brood.filter(b=>b.age<9).length;
-  for(const [id,n] of [['population',world.ants.length],['reserve',Math.floor(world.reserve)],['eggs',eggs],['larvae',world.brood.length-eggs]]){
-    if(get(id).textContent!==String(n))get(id).textContent=n;
+  for(const [i,c] of colonies.entries()){
+    const eggs=c.brood.filter(b=>b.age<9).length;
+    for(const [key,n] of [['population',c.ants.length],['reserve',Math.floor(c.reserve)],['eggs',eggs],['larvae',c.brood.length-eggs]])setReading(key+i,String(n));
   }
+  setReading('vitalStats',colonies.map((c,i)=>(i?'Bleue':'Ocre')+' · '+Math.floor(c.consumed)+' graines consommées · pertes par âge '+c.deaths.âge+', faim '+c.deaths.faim+', combat '+c.deaths.combat).join(' | '));
+  if(rival)setReading('rivalStats',(world.clashes+rival.clashes)+' rencontres agressives');
 }
+function setReading(id,value){
+  const element=get(id);
+  if(element.textContent!==value)element.textContent=value;
+}
+
 function frame(now){
   if(last!==null&&!paused){elapsed+=Math.min((now-last)/1000,.12)*speed;
     while(elapsed>=STEP){for(const c of colonies)c.tick(STEP);elapsed-=STEP;}}
@@ -1094,16 +1127,13 @@ function add(x,y){
   draw();
 }
 const hints={pan:'Glisse pour déplacer la vue agrandie.',seeds:'Touche le sol pour déposer des graines.',wall:'Glisse le doigt pour tracer un mur.',erase:'Glisse sur un mur pour ouvrir un passage.',follow:'Touche une ouvrière pour suivre son activité.'};
-for(const button of document.querySelectorAll('[data-tool]')){
-  button.onclick=()=>{
-    tool=button.dataset.tool;
-    if(tool==='pan' && camera.zoom===1)setZoom(2);
-    for(const other of document.querySelectorAll('[data-tool]'))other.setAttribute('aria-pressed',String(other===button));
-    get('hint').textContent=hints[tool];get('status').textContent='';
-    if(tool!=='follow'){selected=null;get('observer').hidden=true;}
-    draw();
-  };
-}
+get('tool').onchange=e=>{
+  tool=e.target.value;get('feed').hidden=tool!=='seeds';
+  if(tool==='pan' && camera.zoom===1)setZoom(2);
+  get('hint').textContent=hints[tool];get('status').textContent='';
+  if(tool!=='follow'){selected=null;get('observer').hidden=true;}
+  draw();
+};
 function position(e){
   const r=field.getBoundingClientRect();
   const u=((e.clientX-r.left)/r.width-.5)/camera.zoom+camera.x;
@@ -1158,6 +1188,7 @@ field.addEventListener('pointerup',e=>{
       const d=Math.hypot(((screen.x/field.width-camera.x)*camera.zoom+.5)*box.width+box.left-e.clientX,((screen.y/field.height-camera.y)*camera.zoom+.5)*box.height+box.top-e.clientY);
       if(d<best){best=d;selected=ant;}
     }
+    if(selected)awaitingContact=false;
     get('observer').hidden=!selected;
     get('status').textContent=selected?'':'Touche plus près d’une ouvrière.';
     draw();
@@ -1167,7 +1198,7 @@ field.addEventListener('pointerup',e=>{
 field.addEventListener('lostpointercapture',e=>{if(stroke?.id===e.pointerId)stroke=null;});
 get('feed').onclick=()=>add(8+Math.random()*(W-16),8+Math.random()*(H-16));
 get('pause').onclick=()=>{paused=!paused;get('pause').textContent=paused?'Reprendre':'Pause';last=null;};
-get('speed').onclick=()=>{speed=speed===4?1:speed*2;get('speed').textContent='Vitesse ×'+speed;};
+get('speed').onclick=()=>{speed=speed===4?1:speed*2;get('speed').textContent='×'+speed;get('speed').setAttribute('aria-label','Vitesse de simulation ×'+speed);};
 function setZoom(value){
   camera.zoom=value;
   if(value===1)centerView(.5,.5);else focusNest();
