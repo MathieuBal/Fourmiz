@@ -39,7 +39,7 @@ summary{min-height:44px;align-content:center;font-weight:650}details.panel{paddi
 <p id="mapKey" hidden>Ocre et bleu · passages récents. Violet · zone partagée. Croix · confrontation. Cercle rouge · tensions répétées.</p></div></section>
 <aside><section class="panel"><h2>Colonies</h2><table aria-label="État des colonies"><thead><tr><th scope="col">Indicateur</th><th scope="col">Ocre</th><th scope="col" class="duelOnly">Bleue</th></tr></thead><tbody><tr><th scope="row">Ouvrières</th><td id="population0"></td><td class="duelOnly" id="population1"></td></tr><tr><th scope="row">Graines en réserve</th><td id="reserve0"></td><td class="duelOnly" id="reserve1"></td></tr><tr><th scope="row">Œufs</th><td id="eggs0"></td><td class="duelOnly" id="eggs1"></td></tr><tr><th scope="row">Larves</th><td id="larvae0"></td><td class="duelOnly" id="larvae1"></td></tr></tbody></table></section>
 <details class="panel" id="display"><summary>Affichage et caméra</summary><div class="buttons"><button id="territory" aria-pressed="false">Territoires</button><button id="trails" aria-pressed="true">Pistes</button><button id="relief" aria-pressed="true">Vue 3D</button><button id="zoom">Zoom ×2</button><button id="watch" hidden>Voir une confrontation</button></div></details>
-<details class="panel"><summary>Bilan de la simulation</summary><div class="detail"><p id="vitalStats"></p><p id="rivalStats" hidden></p><p id="raidStats" hidden></p><button id="watchPile" hidden>Observer le tas disputé</button></div></details></aside></div></main>
+<details class="panel"><summary>Bilan de la simulation</summary><div class="detail"><p id="vitalStats"></p><p id="rivalStats" hidden></p><p id="nestStats" hidden></p><p id="raidStats" hidden></p><button id="watchPile" hidden>Observer le tas disputé</button></div></details></aside></div></main>
 <script>
 // World coordinates are independent of screen pixels and simulation speed.
 const duel=new URLSearchParams(location.search).get('duel')!=='0';
@@ -84,6 +84,7 @@ const activityReason={
   'Avance vers une rivale':'Des alliées proches la soutiennent autour de ce tas.',
   'Tient le bord du tas':'Elle laisse les graines accessibles aux récolteuses.',
   'Évite une rivale':'Elle se retire avec sa charge ou face à un groupe plus nombreux.',
+  'Attaque les abords du nid':'Une porteuse adverse a été repérée près de son entrée avec une alliée en soutien.',
   'Répond à une alarme':'Une alliée proche a signalé une confrontation.',
   'Rompt le contact':'La confrontation vient de prendre fin.',
   'Se replie vers son nid':'Elle regagne le nid après une lutte.',
@@ -434,7 +435,7 @@ function colony(random=Math.random,team=0){
   }
   function contestFood(ant,local,dt){
     if(ant.load || ant.guardUntil>time || ant.returning || ant.opponent || time<ant.avoidUntil)return false;
-    if(!offensive && time<nextOffensive)return false;
+    if(nestRaid || (!offensive && time<nextOffensive))return false;
     const enemies=local.filter(b=>b.team!==team && !b.returning && Math.hypot(b.x-ant.x,b.y-ant.y)<4 && clearSegment(ant,b));
     if(!offensive && !enemies.length)return false;
     const allies=local.filter(b=>b!==ant && b.team===team && !b.returning &&
@@ -480,6 +481,47 @@ function colony(random=Math.random,team=0){
     if(distance>2.8 && distance<5)return 'pause';
     const angle=Math.atan2(ant.y-pile.y,ant.x-pile.x);
     routeTo(ant,{x:pile.x+4*Math.cos(angle),y:pile.y+4*Math.sin(angle)},dt);
+    return 'move';
+  }
+  const enemyNest=nests[1-team];
+  let nestRaid=null,nextNestRaid=0,nestAttacks=0,divertedCarriers=0;
+  function readyToRaid(worker){
+    return !worker.load && !worker.inside && !worker.cause && !worker.opponent &&
+      !worker.returning && !(worker.guardUntil>time || worker.avoidUntil>time || worker.withdrawUntil>time);
+  }
+  function leaveRaid(){
+    for(const worker of nestRaid.members){
+      if(!worker.cause && !worker.inside)worker.returning=true;
+    }
+    nestRaid=null;
+    nextNestRaid=time+35;
+  }
+  function attackEntrance(ant,local,dt){
+    if(time<nextNestRaid || !readyToRaid(ant) || offensive || ants.length<6)return false;
+    if(nestRaid && !nestRaid.members.includes(ant))return false;
+    const distance=Math.hypot(ant.x-enemyNest.x,ant.y-enemyNest.y);
+    if(distance>14 || !clearSegment(ant,enemyNest))return false;
+    const visible=local.filter(b=>b!==ant && Math.hypot(ant.x-b.x,ant.y-b.y)<4 && clearSegment(ant,b));
+    const defenders=visible.filter(b=>b.team!==team);
+    const carrier=defenders.find(b=>b.load && !b.returning && !b.opponent && !(b.avoidUntil>time));
+    if(!nestRaid){
+      const ally=visible.find(b=>b.team===team && readyToRaid(b));
+      if(!carrier || !ally || defenders.length>1)return false;
+      nestRaid={members:[ant,ally],until:time+7,diverted:new Set()};
+      nestAttacks++;
+    }
+    if(defenders.length>2){leaveRaid();return false;}
+    if(carrier && !nestRaid.diverted.has(carrier)){
+      nestRaid.diverted.add(carrier);
+      divertedCarriers++;
+      carrier.a=Math.atan2(carrier.y-ant.y,carrier.x-ant.x);
+      carrier.avoidUntil=time+1.2;
+      carrier.activity='Évite une rivale';
+      rememberIntrusion(carrier,ant);
+    }
+    ant.activity='Attaque les abords du nid';
+    if(distance<=7)return 'pause';
+    aim(ant,enemyNest.x,enemyNest.y,dt);
     return 'move';
   }
   function guardCapacity(population){
@@ -552,13 +594,13 @@ function colony(random=Math.random,team=0){
       ant.activity='Récupère au nid';buckets[bucket(ant.x,ant.y)].delete(ant);
       return 'pause';
     }
-    if(ant.restUntil>time)return guardEntrance(ant,local,dt) || contestFood(ant,local,dt);
+    if(ant.restUntil>time)return guardEntrance(ant,local,dt) || attackEntrance(ant,local,dt) || contestFood(ant,local,dt);
     const rival=local.find(b=>b.team!==team && !b.returning && b.restUntil<=time &&
       Math.hypot(b.x-ant.x,b.y-ant.y)<2.25 && clearSegment(ant,b));
     if(!rival){
       const patrol=guardEntrance(ant,local,dt);
       if(patrol)return patrol;
-      const pressure=contestFood(ant,local,dt);
+      const pressure=attackEntrance(ant,local,dt) || contestFood(ant,local,dt);
       if(pressure)return pressure;
       if(ant.load)return false;
       const caller=local.find(b=>b!==ant && b.team===team && b.alarmUntil>time &&
@@ -704,6 +746,11 @@ function colony(random=Math.random,team=0){
   }
   function tick(dt){
     time+=dt;decay+=dt;
+    if(nestRaid){
+      const [a,b]=nestRaid.members;
+      if(time>=nestRaid.until || !readyToRaid(a) || !readyToRaid(b) ||
+        Math.hypot(a.x-b.x,a.y-b.y)>6 || !clearSegment(a,b))leaveRaid();
+    }
     if(offensive){
       for(const a of offensive.members){
         if(a.cause || a.inside || a.returning || a.guardUntil>time || a.load ||
@@ -820,7 +867,7 @@ function colony(random=Math.random,team=0){
       }
     }
   }
-  return {ants,food,brood,visits,deaths,get offensive(){return offensive},get lastOffensive(){return lastOffensive},get consumed(){return consumed},scent,seeds,tick,walls,paint,center,get clashes(){return clashes},get time(){return time},get reserve(){return reserve}};
+  return {ants,food,brood,visits,deaths,get nestRaid(){return nestRaid},get nestAttacks(){return nestAttacks},get divertedCarriers(){return divertedCarriers},get offensive(){return offensive},get lastOffensive(){return lastOffensive},get consumed(){return consumed},scent,seeds,tick,walls,paint,center,get clashes(){return clashes},get time(){return time},get reserve(){return reserve}};
 }
 </script>
 <script>
@@ -1198,6 +1245,11 @@ function draw(){
   }
   setReading('vitalStats',colonies.map((c,i)=>(i?'Bleue':'Ocre')+' · '+Math.floor(c.consumed)+' graines consommées · pertes par âge '+c.deaths.âge+', faim '+c.deaths.faim+', combat '+c.deaths.combat).join(' | '));
   if(rival)setReading('rivalStats',(world.clashes+rival.clashes)+' rencontres agressives');
+  if(rival && colonies.some(c=>c.nestAttacks)){
+    get('nestStats').hidden=false;
+    setReading('nestStats',colonies.map((c,i)=>(i?'Bleue':'Ocre')+' · attaques du nid adverse : '+c.nestAttacks+
+      (c.nestRaid?' (en cours)':'')+' · porteuses détournées : '+c.divertedCarriers).join(' | '));
+  }
   if(rival && (world.lastOffensive || rival.lastOffensive)){
     get('raidStats').hidden=get('watchPile').hidden=false;
     const reports=colonies.flatMap((c,i)=>{
