@@ -25,6 +25,30 @@ const nests=duel?[{x:50,y:90},{x:270,y:90}]:[NEST];
 const territoryCols=Math.ceil(W/4),territoryRows=Math.ceil(H/4);
 const encountersOnMap=[];
 const ground={food:[],walls:new Set(),buckets:null,wallListeners:[]};
+const activityReason={
+  'Explore':'Aucune source ni piste assez nette à suivre.',
+  'Suit une piste':'Des phéromones de sa colonie orientent sa recherche.',
+  'Rejoint des graines':'Elle a détecté un tas à proximité.',
+  'Rapporte une graine':'Elle transporte de la nourriture vers la réserve.',
+  'Libère l’entrée du nid':'Elle entame une nouvelle sortie.',
+  'S’éloigne du nid':'Elle est encore près de l’entrée.',
+  'Reprend son chemin appris':'Elle reconnaît le trajet d’une récolte précédente.',
+  'Cherche un détour':'Un obstacle coupe son trajet mémorisé.',
+  'Cherche un passage':'Les murs bloquent le chemin vers sa destination.',
+  'Menace mandibules ouvertes':'Une ouvrière rivale est au contact.',
+  'Lutte au contact':'La rencontre avec sa rivale a dégénéré.',
+  'Rompt le contact':'La confrontation vient de prendre fin.',
+  'Se replie vers son nid':'Elle regagne le nid après une lutte.',
+  'Récupère au nid':'Elle se repose après son repli.'
+};
+
+// Use separate entry and exit thresholds around a faint scent boundary.
+function trailActivity(previous,concentration,turn){
+  const tracking=previous==='Suit une piste';
+  if(concentration>(tracking ? .055 : .07) || Math.abs(turn)>(tracking ? .015 : .02))return 'Suit une piste';
+  return 'Explore';
+}
+
 function colony(random=Math.random,team=0){
   const NEST=nests[team];
   const ants=[], food=ground.food, brood=[], scent=new Float32Array(W*H);
@@ -253,10 +277,11 @@ function colony(random=Math.random,team=0){
       if(!openGround(x,y)||!clearBody(x,y,nearby(x,y)))continue;
       const lifespan=190+random()*190;
       const ant={expires:time+lifespan*(founder?1-.9*random():1),hunger:0,endurance:24+36*random(),
-        team,restUntil:0,id:nextId++,activity:'Explore',x,y,a:t,load:false,memory:null,urge:0,
+        team,restUntil:0,id:nextId++,activity:'S’éloigne du nid',x,y,a:t,load:false,memory:null,urge:0,
         route:[],cursor:0,deliveries:0,visits:0,encounters:0,contacts:new Set(),
         stride:random()*TAU,phase:random()*TAU,pace:5.4+random()*1.2,passSide:0};
       leaveNest(ant);
+      if(ant.exit)ant.activity='Libère l’entrée du nid';
       ants.push(ant);buckets[bucket(x,y)].add(ant);return true;
     }
     return false;
@@ -392,6 +417,53 @@ function colony(random=Math.random,team=0){
       if(b.age>=22 && spawn())brood.splice(i,1);
     }
   }
+  function chooseForagingGoal(ant,dist){
+    if(ant.load)return NEST;
+    if(ant.exit && dist<exitRadius && time<ant.exit.until)return ant.exit;
+    return food.find(f=>Math.hypot(ant.x-f.x,ant.y-f.y)<5);
+  }
+  function forage(ant,dist,dt){
+    const goal=chooseForagingGoal(ant,dist);
+    if(goal===NEST){
+      ant.activity='Rapporte une graine';
+      routeTo(ant,NEST,dt);
+      if(dist<=dropRadius){
+        reserve++;ant.load=false;ant.tripMarks=null;finishTrip(ant);leaveNest(ant);
+        ant.activity=ant.exit?'Libère l’entrée du nid':'S’éloigne du nid';
+      }
+    }else if(goal && goal===ant.exit){
+      ant.activity='Libère l’entrée du nid';
+      routeTo(ant,ant.exit,dt);
+    }else{
+      ant.exit=null;
+      const target=goal;
+      if(target){
+        ant.activity='Rejoint des graines';
+        routeTo(ant,target,dt);
+        if(Math.hypot(ant.x-target.x,ant.y-target.y)<1.5 && (!walls.size || tile(ant.x,ant.y)===tile(target.x,target.y))){
+          ant.activity='Rapporte une graine';
+          ant.load=true;ant.homeward=[{x:ant.x,y:ant.y}];ant.tripDistance=0;ant.tripMarks=new Map();
+          ant.memory=target;ant.urge=time+32;
+          // Connect the seed pile to the actual pickup point (up to 1.5 units).
+          const dx=target.x-ant.x,dy=target.y-ant.y,len=Math.hypot(dx,dy)||1;
+          for(let t=0;t<=1;t+=.5)deposit(cell(ant.x+t*dx,ant.y+t*dy),.35,dx/len,dy/len);
+          if(--target.amount===0)food.splice(food.indexOf(target),1);
+        }
+      }else if(!recall(ant,dt)){
+        const following=dist>=trailStart && scent[cell(ant.x,ant.y)]>.07;
+        const turn=dist>=trailStart?readTrail(ant):0;
+
+        if(dist<trailStart){
+          ant.activity='S’éloigne du nid';
+          const outward=Math.atan2(ant.y-NEST.y,ant.x-NEST.x);
+          aim(ant,NEST.x+14*Math.cos(outward),NEST.y+14*Math.sin(outward),dt);
+        }else{
+          ant.activity=trailActivity(ant.activity,scent[cell(ant.x,ant.y)],turn);
+          ant.a+=dt*(turn*4+(following ? .28 : 1)*(1.3*Math.sin(time*1.4+ant.phase)+.85*Math.sin(time*.57+ant.id)));
+        }
+      }
+    }
+  }
   function tick(dt){
     time+=dt;decay+=dt;
     renewFood();
@@ -420,41 +492,7 @@ function colony(random=Math.random,team=0){
       const local=nearby(ant.x,ant.y);
       const reaction=duel && encounter(ant,local,dt);
       if(reaction==='pause')continue;
-      if(reaction==='move'){ /* Heading supplied by the encounter. */ }
-      else if(ant.load){
-        ant.activity='Rapporte une graine';
-        routeTo(ant,NEST,dt);
-        if(dist<=dropRadius){
-          reserve++;ant.load=false;ant.tripMarks=null;finishTrip(ant);leaveNest(ant);
-        }
-      }else if(ant.exit && dist<exitRadius && time<ant.exit.until){
-        ant.activity='Libère l’entrée du nid';
-        routeTo(ant,ant.exit,dt);
-      }else{
-        ant.exit=null;
-        const target=food.find(f=>Math.hypot(ant.x-f.x,ant.y-f.y)<5);
-        if(target){
-          ant.activity='Rejoint des graines';
-          routeTo(ant,target,dt);
-          if(Math.hypot(ant.x-target.x,ant.y-target.y)<1.5 && (!walls.size || tile(ant.x,ant.y)===tile(target.x,target.y))){
-            ant.load=true;ant.homeward=[{x:ant.x,y:ant.y}];ant.tripDistance=0;ant.tripMarks=new Map();
-            ant.memory=target;ant.urge=time+32;
-            // Connect the seed pile to the actual pickup point (up to 1.5 units).
-            const dx=target.x-ant.x,dy=target.y-ant.y,len=Math.hypot(dx,dy)||1;
-            for(let t=0;t<=1;t+=.5)deposit(cell(ant.x+t*dx,ant.y+t*dy),.35,dx/len,dy/len);
-            if(--target.amount===0)food.splice(food.indexOf(target),1);
-          }
-        }else if(!recall(ant,dt)){
-          const following=dist>=trailStart && scent[cell(ant.x,ant.y)]>.07;
-          const turn=dist>=trailStart?readTrail(ant):0;
-          ant.activity=following||Math.abs(turn)>.02?'Suit une piste':'Explore';
-          if(dist<trailStart){
-            ant.activity='S’éloigne du nid';
-            const outward=Math.atan2(ant.y-NEST.y,ant.x-NEST.x);
-            aim(ant,NEST.x+14*Math.cos(outward),NEST.y+14*Math.sin(outward),dt);
-          }else ant.a+=dt*(turn*4+(following ? .28 : 1)*(1.3*Math.sin(time*1.4+ant.phase)+.85*Math.sin(time*.57+ant.id)));
-        }
-      }
+      if(reaction!=='move')forage(ant,dist,dt);
       const forwardX=Math.cos(ant.a),forwardY=Math.sin(ant.a);
       ant.encounters*=Math.exp(-dt/4);
       for(const previous of ant.contacts){
@@ -828,7 +866,7 @@ function draw(){
     ctx.strokeStyle='#71351d';ctx.lineWidth=Math.max(1,u*.35);ctx.stroke();
     const trips=selected.deliveries===1?'1 livraison':selected.deliveries+' livraisons';
     const traffic=selected.load && selected.encounters>=1?' · Marquage réduit':'';
-    const label='Ouvrière '+(duel?(selected.team?'bleue ':'ocre '):'')+selected.id+' · '+selected.activity+' · '+trips+traffic;
+    const label='Ouvrière '+(duel?(selected.team?'bleue ':'ocre '):'')+selected.id+' · '+selected.activity+'. '+activityReason[selected.activity]+' · '+trips+traffic;
     if(get('observer').textContent!==label)get('observer').textContent=label;
   }
   const vital=colonies.map((c,i)=>{
