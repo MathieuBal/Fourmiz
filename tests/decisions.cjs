@@ -42,3 +42,45 @@ for (const duel of [false, true]) {
     for (const c of colonies) assert.ok(c.ants.some(ant => ant.deliveries > 0));
   });
 }
+
+test('une visite cible une larve, accélère sa maturation et conserve la ration', () => {
+  function fixture() {
+    const { colony, STEP } = loadWorld(false);
+    const c = colony(() => .5, 0);
+    const larva = { id: 100, age: 9, hunger: 0, caredUntil: 0, nurse: null };
+    c.brood.push(larva);
+    return { c, larva, STEP };
+  }
+  const visit = fixture();
+  const control = fixture();
+  for (const ant of control.c.ants) ant.nextCare = Infinity;
+  visit.c.tick(visit.STEP);
+  control.c.tick(control.STEP);
+  const nurse = visit.larva.nurse;
+  assert.ok(nurse && nurse.patient === visit.larva && nurse.inside);
+  assert.equal(visit.c.ants.filter(ant => ant.patient).length, 1);
+  for (let i = 1; i < 122; i++) {
+    visit.c.tick(visit.STEP);
+    control.c.tick(control.STEP);
+  }
+  assert.ok(visit.larva.age > control.larva.age);
+  assert.equal(visit.c.consumed, control.c.consumed);
+  assert.equal(visit.larva.nurse, null);
+  assert.equal(nurse.patient, null);
+  assert.ok(!nurse.inside);
+});
+
+test('une nourrice interrompue libère la larve sans valider sa visite', () => {
+  const { colony, STEP } = loadWorld(false);
+  const c = colony(() => .5, 0);
+  const larva = { id: 100, age: 9, hunger: 0, caredUntil: 0, nurse: null };
+  c.brood.push(larva);
+  c.tick(STEP);
+  const first = larva.nurse;
+  assert.ok(first);
+  first.expires = c.time;
+  c.tick(STEP);
+  assert.equal(first.cause, 'âge');
+  assert.notEqual(larva.nurse, first);
+  assert.equal(larva.caredUntil, 0);
+});
