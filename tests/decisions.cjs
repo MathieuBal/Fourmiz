@@ -287,3 +287,38 @@ test('offensive locale : une rivale recule et une récolteuse livre une graine d
   for (let i=0;i<100;i++) blue.tick(STEP);
   assert.equal(blue.offensive, null);
 });
+
+for (const team of [0, 1]) {
+  test('attaque du nid par une paire, puis repli · équipe '+team, () => {
+    const { colony, ground, W, STEP } = loadWorld(true);
+    const home = colony(() => .4, 1-team);
+    const away = colony(() => .4, team);
+    const entrance = team ? 50 : 270;
+    for (const bucket of ground.buckets) bucket.clear();
+    function place(worker, x, y) {
+      for (const bucket of ground.buckets) bucket.delete(worker);
+      Object.assign(worker, {x, y, inside:false});
+      ground.buckets[Math.floor(y/4)*Math.ceil(W/4)+Math.floor(x/4)].add(worker);
+    }
+    for (const [i,worker] of away.ants.entries()) place(worker, 130+i*2, 115);
+    for (const [i,worker] of home.ants.entries()) place(worker, 130+i*2, 145);
+    const [scout,support] = away.ants;
+    const carrier = home.ants[0];
+    carrier.load = true;
+    place(carrier, entrance+8, 90);
+    place(scout, entrance+11, 90);
+    away.tick(STEP);
+    assert.equal(away.nestAttacks, 0);
+    place(support, entrance+12, 92);
+    away.tick(STEP);
+    assert.equal(away.nestRaid.members.length, 2);
+    assert.equal(away.divertedCarriers, 1);
+    assert.ok(carrier.load && carrier.avoidUntil > away.time);
+    assert.equal(scout.activity, 'Attaque les abords du nid');
+    for (let i=0; i<220; i++) away.tick(STEP);
+    assert.equal(away.nestRaid, null);
+    assert.equal(away.nestAttacks, 1);
+    assert.ok(scout.returning && support.returning);
+    assert.equal(away.divertedCarriers, 1);
+  });
+}
