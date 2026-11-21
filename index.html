@@ -39,7 +39,9 @@ const activityReason={
   'Lutte au contact':'La rencontre avec sa rivale a dégénéré.',
   'Rompt le contact':'La confrontation vient de prendre fin.',
   'Se replie vers son nid':'Elle regagne le nid après une lutte.',
-  'Récupère au nid':'Elle se repose après son repli.'
+  'Récupère au nid':'Elle se repose après son repli.',
+  'Soigne une larve':'Cette larve attendait une visite dans la chambre du couvain.',
+  'Rejoint la sortie':'Sa visite est terminée. Elle retourne en surface.'
 };
 
 // Use separate entry and exit thresholds around a faint scent boundary.
@@ -54,7 +56,7 @@ function colony(random=Math.random,team=0){
   const ants=[], food=ground.food, brood=[], scent=new Float32Array(W*H);
   const visits=new Float32Array(territoryCols*territoryRows);
   const deaths={âge:0,faim:0,combat:0};
-  let nextId=1,consumed=0,nextMeal=1;
+  let nextBroodId=1,nextId=1,consumed=0,nextMeal=1;
   let reserve=8,time=0,nextEgg=8,decay=0;
   const cols=W/2, rows=H/2, walls=ground.walls, fields=new Map();
   const radius=.88, spacing=2*radius, bucketSize=4;
@@ -277,7 +279,7 @@ function colony(random=Math.random,team=0){
       if(!openGround(x,y)||!clearBody(x,y,nearby(x,y)))continue;
       const lifespan=190+random()*190;
       const ant={expires:time+lifespan*(founder?1-.9*random():1),hunger:0,endurance:24+36*random(),
-        team,restUntil:0,id:nextId++,activity:'S’éloigne du nid',x,y,a:t,load:false,memory:null,urge:0,
+        team,restUntil:0,nextCare:0,id:nextId++,activity:'S’éloigne du nid',x,y,a:t,load:false,memory:null,urge:0,
         route:[],cursor:0,deliveries:0,visits:0,encounters:0,contacts:new Set(),
         stride:random()*TAU,phase:random()*TAU,pace:5.4+random()*1.2,passSide:0};
       leaveNest(ant);
@@ -395,6 +397,7 @@ function colony(random=Math.random,team=0){
   function removeWorker(index,cause){
     const ant=ants[index];
     ant.cause=cause;deaths[cause]++;
+    if(ant.patient)ant.patient.nurse=null;
     buckets[bucket(ant.x,ant.y)].delete(ant);
     if(ant.load)seeds(ant.x,ant.y,1);
     ants.splice(index,1);
@@ -413,9 +416,25 @@ function colony(random=Math.random,team=0){
       if(b.age<9){b.age++;continue;}
       b.hunger=Math.max(0,b.hunger+1-2*ration);
       if(b.hunger>=18){brood.splice(i,1);continue;}
-      b.age+=ration;
+      // A visit improves maturation for four meals. Food is already debited above.
+      b.age+=ration*(time<b.caredUntil ? 1 : .75);
       if(b.age>=22 && spawn())brood.splice(i,1);
     }
+  }
+  function beginBroodCare(ant){
+    // The worker perceives brood demand only at the nest; a lean reserve
+    // favours another trip outside. Preferences are stable for each worker.
+    const reserveThreshold=ants.length*.016+1+ant.phase/TAU*2;
+    if(reserve<reserveThreshold || time<ant.nextCare)return false;
+    const patient=brood.find(b=>b.age>=9 && !b.nurse && time>=b.caredUntil);
+    if(!patient)return false;
+    patient.nurse=ant;
+    ant.patient=patient;
+    ant.activity='Soigne une larve';
+    ant.inside=true;
+    ant.wake=time+2;
+    buckets[bucket(ant.x,ant.y)].delete(ant);
+    return true;
   }
   function chooseForagingGoal(ant,dist){
     if(ant.load)return NEST;
@@ -483,6 +502,17 @@ function colony(random=Math.random,team=0){
     for(const ant of ants){
       const dist=Math.hypot(ant.x-NEST.x,ant.y-NEST.y);
       if(ant.inside){
+        if(ant.patient){
+          const patient=ant.patient;
+          if(!brood.includes(patient)){
+            ant.wake=time;
+          }else if(time<ant.wake)continue;
+          else patient.caredUntil=time+4;
+          patient.nurse=null;
+          ant.patient=null;
+          ant.nextCare=time+4+ant.phase;
+          ant.activity='Rejoint la sortie';
+        }
         if(time<ant.wake)continue;
         const t=random()*TAU,x=NEST.x+4*Math.cos(t),y=NEST.y+4*Math.sin(t);
         if(!openGround(x,y)||!clearBody(x,y,nearby(x,y)))continue;
@@ -492,7 +522,10 @@ function colony(random=Math.random,team=0){
       const local=nearby(ant.x,ant.y);
       const reaction=duel && encounter(ant,local,dt);
       if(reaction==='pause')continue;
-      if(reaction!=='move')forage(ant,dist,dt);
+      if(reaction!=='move'){
+        if(dist<=dropRadius && !ant.load && brood.length && beginBroodCare(ant))continue;
+        forage(ant,dist,dt);
+      }
       const forwardX=Math.cos(ant.a),forwardY=Math.sin(ant.a);
       ant.encounters*=Math.exp(-dt/4);
       for(const previous of ant.contacts){
@@ -541,7 +574,7 @@ function colony(random=Math.random,team=0){
       // A well-stocked colony can raise more workers; a lean one lays slowly.
       nextEgg=time+(reserve>8+ants.length*.4?3.5:8);
       if(ants.length && reserve>=2+ants.length*.12 && ants.length+brood.length<180){
-        reserve--;consumed++;brood.push({age:0,hunger:0});
+        reserve--;consumed++;brood.push({id:nextBroodId++,age:0,hunger:0,caredUntil:0,nurse:null});
       }
     }
   }
@@ -551,7 +584,7 @@ function colony(random=Math.random,team=0){
 <script>
 const get=id=>document.getElementById(id),field=get('field'),ctx=field.getContext('2d'),world=colony(),rival=duel?colony(Math.random,1):null;
 const colonies=rival?[world,rival]:[world];
-function workers(){return rival?world.ants.concat(rival.ants).filter(a=>!a.inside):world.ants;}
+function workers(){return (rival?world.ants.concat(rival.ants):world.ants).filter(a=>!a.inside);}
 if(rival){
   get('watch').hidden=false;
   get('mode').href='?duel=0';get('mode').textContent='Revenir à une colonie';
@@ -695,11 +728,13 @@ function showNest(team){
 }
 function drawNest(){
   const c=colonies[nestView],eggs=c.brood.filter(b=>b.age<9).length;
+  const larvae=c.brood.filter(b=>b.age>=9);
+  const attended=larvae.filter(b=>b.nurse);
   const rooms=[
     [180,140,'Grenier',Math.floor(c.reserve),'#c3a05c'],
     [520,140,'Œufs',eggs,'#fff2dc'],
     [180,310,'Larves',c.brood.length-eggs,'#e7cbbb'],
-    [520,310,'En récupération',c.ants.filter(a=>a.inside).length,nestView?'#7cb9de':'#d58a55']
+    [520,310,'En récupération',c.ants.filter(a=>a.inside && a.activity==='Récupère au nid').length,nestView?'#7cb9de':'#d58a55']
   ];
   const g=get('sectionView').getContext('2d');
   g.fillStyle='#674733';g.fillRect(0,0,720,420);
@@ -713,10 +748,15 @@ function drawNest(){
     for(let k=0;k<Math.min(24,n);k++){
       const dx=(k%8-3.5)*19,dy=Math.floor(k/8)*9;
       ellipse(g,x+dx,y+9+dy,7,3.4,color,k%2?.25:-.25);
+      if(label==='Larves' && larvae[k].nurse){
+        ellipse(g,x+dx+6,y+6+dy,4,2.2,nestView?'#7cb9de':'#d58a55',-.6);
+      }
     }
     g.fillStyle='#ffecd1';g.textAlign='center';g.font='bold 23px system-ui';g.fillText(label+' · '+n,x,y-9);
   }
-  const info=(nestView?'Bleue':'Ocre')+' · '+rooms.map(r=>r[2]+' '+r[3]).join(' · ');
+  const patient=attended[0];
+  const visit=patient?' · Ouvrière nº '+patient.nurse.id+' auprès de la larve nº '+patient.id:'';
+  const info=(nestView?'Bleue':'Ocre')+' · '+rooms.map(r=>r[2]+' '+r[3]).join(' · ')+' · Nourrices actives '+attended.length+visit;
   if(get('chambers').textContent!==info)get('chambers').textContent=info;
 }
 get('territory').onclick=()=>{
@@ -861,12 +901,14 @@ function draw(){
     selected=null;
   }
   if(selected){
-    const at=relief?project(selected.x,selected.y):{x:selected.x*sx,y:selected.y*sy};
-    ctx.beginPath();ctx.arc(at.x,at.y,Math.max(2*u,9*field.width/field.clientWidth),0,TAU);
-    ctx.strokeStyle='#71351d';ctx.lineWidth=Math.max(1,u*.35);ctx.stroke();
+    if(!selected.inside){
+      const at=relief?project(selected.x,selected.y):{x:selected.x*sx,y:selected.y*sy};
+      ctx.beginPath();ctx.arc(at.x,at.y,Math.max(2*u,9*field.width/field.clientWidth),0,TAU);
+      ctx.strokeStyle='#71351d';ctx.lineWidth=Math.max(1,u*.35);ctx.stroke();
+    }
     const trips=selected.deliveries===1?'1 livraison':selected.deliveries+' livraisons';
     const traffic=selected.load && selected.encounters>=1?' · Marquage réduit':'';
-    const label='Ouvrière '+(duel?(selected.team?'bleue ':'ocre '):'')+selected.id+' · '+selected.activity+'. '+activityReason[selected.activity]+' · '+trips+traffic;
+    const label='Ouvrière '+(duel?(selected.team?'bleue ':'ocre '):'')+selected.id+' · '+selected.activity+'. '+activityReason[selected.activity]+(selected.patient?' Larve nº '+selected.patient.id+'.':'')+' · '+trips+traffic;
     if(get('observer').textContent!==label)get('observer').textContent=label;
   }
   const vital=colonies.map((c,i)=>{
