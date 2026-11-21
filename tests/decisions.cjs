@@ -252,3 +252,38 @@ test('des contacts répétés sur huit fronts laissent la voie libre à une port
     assert.equal(home.ants.filter(a => a.guardUntil > home.time).length, Math.floor(population/5));
   }
 });
+
+test('offensive locale : une rivale recule et une récolteuse livre une graine du tas disputé', () => {
+  const { colony, ground, W, STEP } = loadWorld(true);
+  const blue = colony(() => .4, 1), ochre = colony(() => .4, 0);
+  blue.ants.splice(7);
+  ochre.ants.splice(1);
+  for (const bucket of ground.buckets) bucket.clear();
+  function place(ant, x, y) {
+    for (const bucket of ground.buckets) bucket.delete(ant);
+    Object.assign(ant, { x, y, a: 0 });
+    ground.buckets[Math.floor(y/4)*Math.ceil(W/4)+Math.floor(x/4)].add(ant);
+  }
+  // The defender is three units from the first attacker, outside grapple range.
+  blue.seeds(250, 90, 30);
+  const pile = blue.food.find(f => f.x === 250);
+  place(ochre.ants[0], 250, 91);
+  const [leader, support, carrier] = blue.ants;
+  place(leader, 247, 91);
+  place(support, 246, 93);
+  for (const [i,a] of blue.ants.slice(2).entries()) place(a, 280+i*3, 110);
+  blue.tick(STEP);
+  assert.equal(blue.offensive.pile, pile);
+  assert.equal(leader.activity, 'Avance vers une rivale');
+  assert.ok(ochre.ants[0].avoidUntil > blue.time);
+  const report = blue.lastOffensive;
+  place(ochre.ants[0], 220, 130);
+  place(carrier, 250, 90);
+  blue.tick(STEP);
+  assert.ok(carrier.load);
+  assert.deepEqual(Array.from(report.after), [0,0]);
+  for (let i=0; i<900 && !report.after[1]; i++) blue.tick(STEP);
+  assert.ok(report.after[1] > 0);
+  for (let i=0;i<100;i++) blue.tick(STEP);
+  assert.equal(blue.offensive, null);
+});
