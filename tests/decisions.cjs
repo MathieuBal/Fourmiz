@@ -165,7 +165,7 @@ test('une ouvrière garde son entrée après deux contacts puis reprend les livr
   const home = colony(() => .4, 0);
   const away = colony(() => .4, 1);
   const [worker] = home.ants, [intruder] = away.ants;
-  home.ants.splice(1);
+  home.ants.splice(5);
   away.ants.splice(1);
   for (const bucket of ground.buckets) bucket.clear();
   function place(ant, x, y) {
@@ -178,6 +178,7 @@ test('une ouvrière garde son entrée après deux contacts puis reprend les livr
     place(intruder, 59, 90);
     home.tick(STEP);
   }
+  for (let i = 1; i < 5; i++) place(home.ants[i], 100+i*3, 110);
   meet();
   assert.equal(worker.guardUntil, undefined);
   place(intruder, 100, 90);
@@ -206,4 +207,48 @@ test('une ouvrière garde son entrée après deux contacts puis reprend les livr
   home.seeds(worker.x, worker.y, 3);
   for (let i = 0; i < 450 && worker.deliveries === previous; i++) home.tick(STEP);
   assert.ok(worker.deliveries > previous);
+});
+
+test('des contacts répétés sur huit fronts laissent la voie libre à une porteuse', () => {
+  const { colony, ground, W, STEP } = loadWorld(true);
+  const home = colony(() => .4, 0), away = colony(() => .4, 1);
+  home.ants.splice(16);
+  away.ants.splice(8);
+  const carrier = home.ants[8];
+  for (const bucket of ground.buckets) bucket.clear();
+  function place(ant, x, y) {
+    for (const bucket of ground.buckets) bucket.delete(ant);
+    Object.assign(ant, { x, y });
+    ground.buckets[Math.floor(y / 4) * Math.ceil(W / 4) + Math.floor(x / 4)].add(ant);
+  }
+  function invade() {
+    for (let i = 0; i < 8; i++) {
+      const angle = i * Math.PI / 4;
+      place(home.ants[i], 50 + 10 * Math.cos(angle), 90 + 10 * Math.sin(angle));
+      place(away.ants[i], 50 + 12 * Math.cos(angle), 90 + 12 * Math.sin(angle));
+    }
+    home.tick(STEP);
+  }
+  for (let i = 8; i < 16; i++) place(home.ants[i], 90+i*3, 105);
+  invade();
+  for (const [i, ant] of away.ants.entries()) place(ant, 200+i*3, 90);
+  for (let i = 0; i < 155; i++) home.tick(STEP);
+  invade();
+  const guards = home.ants.filter(a => a.guardUntil > home.time);
+  assert.equal(guards.length, 2);
+  assert.ok(Math.cos(guards[0].guardBearing - guards[1].guardBearing) <= .001);
+  for (const [i, ant] of away.ants.entries()) place(ant, 200+i*3, 90);
+  place(carrier, 65, 90);
+  Object.assign(carrier, { a: Math.PI, load: true, homeward: [], tripMarks: new Map(), tripDistance: 0 });
+  const before = carrier.deliveries;
+  for (let i = 0; i < 420 && carrier.deliveries === before; i++) home.tick(STEP);
+  assert.equal(carrier.deliveries, before + 1);
+  assert.ok(guards.every(a => a.guardUntil > home.time));
+  for (const population of [9, 4]) {
+    const others = home.ants.filter(a => !guards.includes(a));
+    for (const ant of others.slice(0, home.ants.length-population)) ant.expires = home.time;
+    home.tick(STEP);
+    assert.equal(home.ants.length, population);
+    assert.equal(home.ants.filter(a => a.guardUntil > home.time).length, Math.floor(population/5));
+  }
 });
