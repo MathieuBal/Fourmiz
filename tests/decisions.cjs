@@ -9,7 +9,7 @@ const engine = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
   .find(match => match[1].includes('function colony('))[1];
 
 function loadWorld(duel) {
-  return runInNewContext(engine + '\n;({ colony, activityReason, trailActivity, assessEncounter, ground, W, STEP })', {
+  return runInNewContext(engine + '\n;({ colony, activityReason, trailActivity, assessEncounter, recordEncounter, ground, W, STEP })', {
     location: { search: '?duel=' + Number(duel) },
     URLSearchParams
   });
@@ -123,4 +123,39 @@ test('une confrontation recrute une voisine, puis son alarme expire', () => {
   for (let i = 0; i < 110; i++) ochre.tick(STEP);
   assert.ok(ochre.time > caller.alarmUntil);
   assert.notEqual(helper.activity, 'Répond à une alarme');
+});
+
+test('deux passages : détour après des rencontres répétées et retour après dissipation', () => {
+  function trip(events, elapsed = 0, alternative = true) {
+    const { colony, recordEncounter, ground, W, STEP } = loadWorld(true);
+    const c = colony(() => .5, 0);
+    const ant = c.ants[0];
+    c.ants.splice(1);
+    for (const bucket of ground.buckets) bucket.clear();
+    for (let y = 1; y < 180; y += 2) {
+      if ((y >= 87 && y <= 93) || (alternative && y >= 95 && y <= 101)) continue;
+      c.paint(72, y, true);
+    }
+    c.paint(72, 94, true);
+    for (let i = 0; i < events; i++) recordEncounter(73, 90, i - events + 1);
+    for (let i = 0; i < elapsed / STEP; i++) c.tick(STEP);
+    for (const bucket of ground.buckets) bucket.clear();
+    Object.assign(ant, { x: 82, y: 90, a: Math.PI, load: true, homeward: [], tripMarks: new Map(), tripDistance: 0 });
+    ground.buckets[Math.floor(ant.y / 4) * Math.ceil(W / 4) + Math.floor(ant.x / 4)].add(ant);
+    let crossing, detoured = false;
+    const deliveries = ant.deliveries;
+    for (let i = 0; i < 600 && ant.deliveries === deliveries; i++) {
+      c.tick(STEP);
+      if (ant.activity === 'Contourne une zone disputée') detoured = true;
+      if (crossing === undefined && ant.x < 72) crossing = ant.y;
+    }
+    assert.equal(ant.deliveries, deliveries + 1);
+    return { crossing, detoured };
+  }
+  const quiet = trip(0), single = trip(1), disputed = trip(2), reopened = trip(2, 37);
+  const onlyOpening = trip(2, 0, false);
+  assert.ok(onlyOpening.crossing < 94);
+  assert.ok(quiet.crossing < 94 && single.crossing < 94);
+  assert.ok(disputed.detoured && disputed.crossing > 96, JSON.stringify(disputed));
+  assert.ok(!reopened.detoured && reopened.crossing < 94);
 });
