@@ -9,7 +9,7 @@ const engine = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
   .find(match => match[1].includes('function colony('))[1];
 
 function loadWorld(duel) {
-  return runInNewContext(engine + '\n;({ colony, activityReason, trailActivity, STEP })', {
+  return runInNewContext(engine + '\n;({ colony, activityReason, trailActivity, assessEncounter, ground, W, STEP })', {
     location: { search: '?duel=' + Number(duel) },
     URLSearchParams
   });
@@ -83,4 +83,44 @@ test('une nourrice interrompue libère la larve sans valider sa visite', () => {
   assert.equal(first.cause, 'âge');
   assert.notEqual(larva.nurse, first);
   assert.equal(larva.caredUntil, 0);
+});
+
+test('une porteuse isolée se retire, le soutien local change sa décision', () => {
+  const { assessEncounter } = loadWorld(true);
+  const worker = { x: 100, y: 90, team: 0, load: true };
+  const home = { x: 50, y: 90 };
+  const pair = [worker, { team: 1 }];
+  assert.ok(assessEncounter(worker, pair, home).withdraw);
+  assert.equal(assessEncounter(worker, [...pair, { team: 0 }], home).withdraw, false);
+  assert.equal(assessEncounter(worker, pair, worker).withdraw, false);
+});
+
+test('une confrontation recrute une voisine, puis son alarme expire', () => {
+  const { colony, ground, W, STEP } = loadWorld(true);
+  const ochre = colony(() => .4, 0);
+  const blue = colony(() => .4, 1);
+  const [caller, helper, distant] = ochre.ants;
+  const [opponent] = blue.ants;
+  function place(ant, x, y) {
+    for (const bucket of ground.buckets) bucket.delete(ant);
+    ant.x = x;
+    ant.y = y;
+    ground.buckets[Math.floor(y / 4) * Math.ceil(W / 4) + Math.floor(x / 4)].add(ant);
+  }
+  place(caller, 267, 90);
+  place(opponent, 269, 90);
+  place(helper, 264, 90);
+  place(distant, 190, 70);
+  // Isolate the fixture from the other founding workers at the blue nest.
+  for (const ant of blue.ants.slice(1)) {
+    for (const bucket of ground.buckets) bucket.delete(ant);
+  }
+  ochre.tick(STEP);
+  assert.equal(caller.opponent, opponent);
+  assert.equal(helper.activity, 'Répond à une alarme');
+  assert.notEqual(distant.activity, helper.activity);
+  place(opponent, 230, 140);
+  for (let i = 0; i < 110; i++) ochre.tick(STEP);
+  assert.ok(ochre.time > caller.alarmUntil);
+  assert.notEqual(helper.activity, 'Répond à une alarme');
 });
