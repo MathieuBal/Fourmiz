@@ -159,3 +159,51 @@ test('deux passages : détour après des rencontres répétées et retour après
   assert.ok(disputed.detoured && disputed.crossing > 96, JSON.stringify(disputed));
   assert.ok(!reopened.detoured && reopened.crossing < 94);
 });
+
+test('une ouvrière garde son entrée après deux contacts puis reprend les livraisons', () => {
+  const { colony, ground, W, STEP } = loadWorld(true);
+  const home = colony(() => .4, 0);
+  const away = colony(() => .4, 1);
+  const [worker] = home.ants, [intruder] = away.ants;
+  home.ants.splice(1);
+  away.ants.splice(1);
+  for (const bucket of ground.buckets) bucket.clear();
+  function place(ant, x, y) {
+    for (const bucket of ground.buckets) bucket.delete(ant);
+    Object.assign(ant, { x, y });
+    ground.buckets[Math.floor(y / 4) * Math.ceil(W / 4) + Math.floor(x / 4)].add(ant);
+  }
+  function meet() {
+    place(worker, 57, 90);
+    place(intruder, 59, 90);
+    home.tick(STEP);
+  }
+  meet();
+  assert.equal(worker.guardUntil, undefined);
+  place(intruder, 100, 90);
+  for (let i = 0; i < 170; i++) home.tick(STEP);
+  meet();
+  assert.ok(worker.guardUntil > home.time);
+  assert.equal(intruder.guardUntil, undefined);
+  place(intruder, 100, 90);
+  let patrol = false, reversed = false;
+  const side = worker.guardSide;
+  for (let i = 0; i < 180; i++) {
+    home.tick(STEP);
+    patrol ||= worker.activity === 'Patrouille à l’entrée';
+    reversed ||= side !== worker.guardSide;
+  }
+  assert.ok(patrol && reversed);
+  place(worker, 57, 90);
+  place(intruder, 60, 90);
+  home.tick(STEP);
+  assert.equal(worker.activity, 'Surveille une intruse');
+  place(intruder, 66, 90);
+  home.tick(STEP);
+  assert.equal(worker.activity, 'Patrouille à l’entrée');
+  while (home.time <= worker.guardUntil + STEP) home.tick(STEP);
+  const previous = worker.deliveries;
+  home.seeds(worker.x, worker.y, 3);
+  for (let i = 0; i < 450 && worker.deliveries === previous; i++) home.tick(STEP);
+  assert.ok(worker.deliveries > previous);
+});
