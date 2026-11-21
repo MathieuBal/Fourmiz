@@ -37,6 +37,8 @@ const activityReason={
   'Cherche un passage':'Les murs bloquent le chemin vers sa destination.',
   'Menace mandibules ouvertes':'Une ouvrière rivale est au contact.',
   'Lutte au contact':'La rencontre avec sa rivale a dégénéré.',
+  'Évite une rivale':'Elle se retire avec sa charge ou face à un groupe plus nombreux.',
+  'Répond à une alarme':'Une alliée proche a signalé une confrontation.',
   'Rompt le contact':'La confrontation vient de prendre fin.',
   'Se replie vers son nid':'Elle regagne le nid après une lutte.',
   'Récupère au nid':'Elle se repose après son repli.',
@@ -49,6 +51,15 @@ function trailActivity(previous,concentration,turn){
   const tracking=previous==='Suit une piste';
   if(concentration>(tracking ? .055 : .07) || Math.abs(turn)>(tracking ? .015 : .02))return 'Suit une piste';
   return 'Explore';
+}
+
+// Local decision thresholds are simulation parameters.
+function assessEncounter(worker,nearbyWorkers,home){
+  const allies=nearbyWorkers.filter(a=>a.team===worker.team).length;
+  const rivals=nearbyWorkers.length-allies;
+  const nearNest=Math.hypot(worker.x-home.x,worker.y-home.y)<14;
+  const support=allies-rivals+(nearNest?2:0)-(worker.load?1:0);
+  return {withdraw:support<0,engagement:clamp(.76+.09*support,.35,.96)};
 }
 
 function colony(random=Math.random,team=0){
@@ -354,6 +365,7 @@ function colony(random=Math.random,team=0){
         ant.withdrawUntil=time+.7;
       }
     }
+    if(time<ant.avoidUntil){ant.activity='Évite une rivale';return 'move';}
     if(time<ant.withdrawUntil){ant.activity='Rompt le contact';return 'move';}
     if(ant.returning){
       ant.activity='Se replie vers son nid';
@@ -368,17 +380,38 @@ function colony(random=Math.random,team=0){
     if(ant.restUntil>time)return false;
     const rival=local.find(b=>b.team!==team && !b.returning && b.restUntil<=time &&
       Math.hypot(b.x-ant.x,b.y-ant.y)<2.25 && clearSegment(ant,b));
-    if(!rival)return false;
+    if(!rival){
+      if(ant.load)return false;
+      const caller=local.find(b=>b!==ant && b.team===team && b.alarmUntil>time &&
+        Math.hypot(b.x-ant.x,b.y-ant.y)<4 && clearSegment(ant,b));
+      if(!caller)return false;
+      ant.activity='Répond à une alarme';
+      aim(ant,caller.x,caller.y,dt);
+      return 'move';
+    }
     ant.restUntil=rival.restUntil=time+5;
-    // P. californicus field encounters: 81% showed aggression (doi:10.2307/1936610).
-    if(random()>=.81)return false;
+    function assess(worker,neighbors){
+      const visible=neighbors.filter(b=>Math.hypot(b.x-worker.x,b.y-worker.y)<4 && clearSegment(worker,b));
+      return assessEncounter(worker,visible,nests[worker.team]);
+    }
+    const own=assess(ant,local),other=assess(rival,nearby(rival.x,rival.y));
+    if(own.withdraw || other.withdraw){
+      for(const [worker,enemy,flees] of [[ant,rival,own.withdraw],[rival,ant,other.withdraw]]){
+        if(!flees)continue;
+        worker.a=Math.atan2(worker.y-enemy.y,worker.x-enemy.x);
+        worker.avoidUntil=time+1.2;
+        worker.activity='Évite une rivale';
+      }
+      return own.withdraw?'move':false;
+    }
+    if(random()>=Math.max(own.engagement,other.engagement))return false;
     clashes++;
     encountersOnMap.push({x:(ant.x+rival.x)/2,y:(ant.y+rival.y)/2,time});
     if(encountersOnMap.length>80)encountersOnMap.shift();
     // Fraction escalating to a struggle and durations are simulation parameters.
     const grapple=random()<.35;
     for(const [worker,opponent] of [[ant,rival],[rival,ant]]){
-      worker.opponent=opponent;worker.displayUntil=time+1.25;
+      worker.opponent=opponent;worker.displayUntil=time+1.25;worker.alarmUntil=time+2.5;
       worker.a=Math.atan2(opponent.y-worker.y,opponent.x-worker.x);
       worker.activity='Menace mandibules ouvertes';
     }
@@ -386,7 +419,7 @@ function colony(random=Math.random,team=0){
       for(const worker of [ant,rival]){
         worker.fightUntil=time+3.8;worker.returning=true;
       }
-      // 7% of all observed encounters were fatal, not 7% of struggles.
+      // Conditional lethality retained from the original duel calibration.
       if(random()<.07/(.81*.35)){
         const victim=random()<.5?ant:rival;
         victim.fatalAt=victim.fightUntil;
