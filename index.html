@@ -9,7 +9,7 @@
 </style>
 <main><header><h1>Fourmiz</h1><dl class="stats"><div><dt>Fourmis</dt><dd id="population"></dd></div><div><dt>Réserve</dt><dd id="reserve"></dd></div><div><dt>Œufs</dt><dd id="eggs"></dd></div><div><dt>Larves</dt><dd id="larvae"></dd></div></dl></header>
 <div class="tools"><button id="territory" aria-pressed="false">Territoires</button><button id="cut">Coupe du nid</button></div>
-<p id="mapKey" hidden>Ocre et bleu · passages récents. Violet · zone partagée. Croix · rencontre agressive.</p>
+<p id="mapKey" hidden>Ocre et bleu · passages récents. Violet · zone partagée. Croix · rencontre agressive. Cercle rouge · tensions répétées.</p>
 <figure style="position:relative"><canvas id="field" aria-label="Terrain de la colonie. Choisis un outil sous le terrain.">Simulation de colonie de fourmis.</canvas>
 <section id="underground" hidden aria-label="Coupe de la fourmilière"><div class="tools"><button id="ochre">Nid ocre</button><button id="blue">Nid bleu</button><button id="surface">Surface ↑</button></div><canvas id="sectionView" width="720" height="420" aria-label="Chambres du nid"></canvas><p id="chambers"></p></section><figcaption class="legend"><span><i class="nest"></i>Nid</span><span><i class="food"></i>Nourriture</span><span><i class="trail"></i>Phéromones</span></figcaption></figure>
 <div class="tools" role="group" aria-label="Outils de terrain"><button data-tool="seeds" aria-pressed="true">Graines</button><button data-tool="wall" aria-pressed="false">Mur</button><button data-tool="erase" aria-pressed="false">Gomme</button><button data-tool="pan" aria-pressed="false">Déplacer la vue</button><button data-tool="follow" aria-pressed="false">Suivre</button></div>
@@ -24,6 +24,20 @@ const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
 const nests=duel?[{x:50,y:90},{x:270,y:90}]:[NEST];
 const territoryCols=Math.ceil(W/4),territoryRows=Math.ceil(H/4);
 const encountersOnMap=[];
+const contestedPatches=[];
+function recordPressure(x,y,time){
+  // Keep only fresh evidence. A single encounter cannot close a passage.
+  const patch=contestedPatches.find(p=>time<p.until && Math.hypot(p.x-x,p.y-y)<9);
+  if(patch){
+    patch.repeated=true;
+    patch.until=time+36;
+  }else contestedPatches.push({x,y,repeated:false,until:time+36});
+}
+function recordEncounter(x,y,time){
+  encountersOnMap.push({x,y,time});
+  if(encountersOnMap.length>80)encountersOnMap.shift();
+  recordPressure(x,y,time);
+}
 const ground={food:[],walls:new Set(),buckets:null,wallListeners:[]};
 const activityReason={
   'Explore':'Aucune source ni piste assez nette à suivre.',
@@ -37,6 +51,7 @@ const activityReason={
   'Cherche un passage':'Les murs bloquent le chemin vers sa destination.',
   'Menace mandibules ouvertes':'Une ouvrière rivale est au contact.',
   'Lutte au contact':'La rencontre avec sa rivale a dégénéré.',
+  'Contourne une zone disputée':'Des confrontations ou des replis se sont répétés sur ce passage.',
   'Évite une rivale':'Elle se retire avec sa charge ou face à un groupe plus nombreux.',
   'Répond à une alarme':'Une alliée proche a signalé une confrontation.',
   'Rompt le contact':'La confrontation vient de prendre fin.',
@@ -313,6 +328,32 @@ function colony(random=Math.random,team=0){
     const delta=Math.atan2(y-ant.y,x-ant.x)+bend-ant.a;
     ant.a+=clamp(Math.atan2(Math.sin(delta),Math.cos(delta)),-5*dt,5*dt);
   }
+  function chooseDetour(ant){
+    if(ant.detour){
+      const d=ant.detour;
+      if(time<d.until && time<d.patch.until && Math.hypot(ant.x-d.x,ant.y-d.y)>1.5 &&
+        clearSegment(ant,d))return d;
+      ant.detour=null;
+    }
+    const hx=Math.cos(ant.a),hy=Math.sin(ant.a);
+    for(const patch of contestedPatches){
+      if(!patch.repeated || time>=patch.until)continue;
+      const dx=patch.x-ant.x,dy=patch.y-ant.y;
+      const ahead=dx*hx+dy*hy,side=dx*hy-dy*hx;
+      if(ahead<1 || ahead>12 || Math.abs(side)>4 || !clearSegment(ant,patch))continue;
+      const preferred=side===0?(ant.id%2?1:-1):Math.sign(side);
+      for(const sign of [preferred,-preferred]){
+        const x=patch.x-hy*10*sign,y=patch.y+hx*10*sign;
+        const d={x,y,patch,until:time+4};
+        const beyond={x:x+hx*5,y:y+hy*5};
+        if(!openGround(x,y) || !openGround(beyond.x,beyond.y) ||
+          !clearSegment(ant,d) || !clearSegment(d,beyond))continue;
+        ant.detour=d;
+        return d;
+      }
+    }
+    return null;
+  }
   let nextLocalSeeds=18,nextWildSeeds=60;
   const localPatch={x:NEST.x+(team?-13:13),y:NEST.y-4};
   function renewFood(){
@@ -396,6 +437,7 @@ function colony(random=Math.random,team=0){
     }
     const own=assess(ant,local),other=assess(rival,nearby(rival.x,rival.y));
     if(own.withdraw || other.withdraw){
+      recordPressure((ant.x+rival.x)/2,(ant.y+rival.y)/2,time);
       for(const [worker,enemy,flees] of [[ant,rival,own.withdraw],[rival,ant,other.withdraw]]){
         if(!flees)continue;
         worker.a=Math.atan2(worker.y-enemy.y,worker.x-enemy.x);
@@ -406,8 +448,7 @@ function colony(random=Math.random,team=0){
     }
     if(random()>=Math.max(own.engagement,other.engagement))return false;
     clashes++;
-    encountersOnMap.push({x:(ant.x+rival.x)/2,y:(ant.y+rival.y)/2,time});
-    if(encountersOnMap.length>80)encountersOnMap.shift();
+    recordEncounter((ant.x+rival.x)/2,(ant.y+rival.y)/2,time);
     // Fraction escalating to a struggle and durations are simulation parameters.
     const grapple=random()<.35;
     for(const [worker,opponent] of [[ant,rival],[rival,ant]]){
@@ -520,6 +561,11 @@ function colony(random=Math.random,team=0){
     time+=dt;decay+=dt;
     renewFood();
     if(time>=nextMeal){nextMeal++;feedColony();
+      if(team===0){
+        for(let i=contestedPatches.length-1;i>=0;i--){
+          if(time>=contestedPatches[i].until)contestedPatches.splice(i,1);
+        }
+      }
       for(let i=0;i<visits.length;i++)visits[i]*=.967;
       for(const a of ants)if(!a.inside){
         const i=Math.floor(a.x/4)+territoryCols*Math.floor(a.y/4);
@@ -557,7 +603,16 @@ function colony(random=Math.random,team=0){
       if(reaction==='pause')continue;
       if(reaction!=='move'){
         if(dist<=dropRadius && !ant.load && brood.length && beginBroodCare(ant))continue;
+        const heading=ant.a;
         forage(ant,dist,dt);
+        if(duel && dist>exitRadius && contestedPatches.length){
+          const detour=chooseDetour(ant);
+          if(detour){
+            ant.activity='Contourne une zone disputée';
+            ant.a=heading;
+            aim(ant,detour.x,detour.y,dt);
+          }
+        }
       }
       const forwardX=Math.cos(ant.a),forwardY=Math.sin(ant.a);
       ant.encounters*=Math.exp(-dt/4);
@@ -665,7 +720,12 @@ function buildLandscape(){
   ellipse(c,field.width*.51,field.height*.91,field.width*.47,field.height*.035,'#0e1916');
   const slice=(z1,z2,color)=>face(c,[[0,H,z1],[W,H,z1],[W,H,z2],[0,H,z2]],color);
   slice(0,-1.3,'#a88454');slice(-1.3,-3.7,'#896449');slice(-3.7,-5.4,'#684c3e');
-  const ground=c.createLinearGradient(0,0,field.width,field.height);
+  function recordEncounter(x,y,time){
+  encountersOnMap.push({x,y,time});
+  if(encountersOnMap.length>80)encountersOnMap.shift();
+  recordPressure(x,y,time);
+}
+const ground=c.createLinearGradient(0,0,field.width,field.height);
   ground.addColorStop(0,'#bbbe86');ground.addColorStop(.35,'#e4d4a4');ground.addColorStop(.76,'#e2c693');ground.addColorStop(1,'#b7b17c');
   face(c,[[0,0,0],[W,0,0],[W,H,0],[0,H,0]],ground);
   let seed=733;const rand=()=>((seed=seed*16807%2147483647)/2147483647);
@@ -744,6 +804,14 @@ function drawTerritory(perspective){
       ctx.drawImage(heat,0,y,heat.width,1,l.x,l.y,r.x-l.x,r.y-l.y+.25);
     }
   }else ctx.drawImage(heat,0,0,field.width,field.height);
+  for(const patch of contestedPatches){
+    if(!patch.repeated || world.time>=patch.until)continue;
+    const p=perspective?project(patch.x,patch.y):{x:patch.x/W*field.width,y:patch.y/H*field.height};
+    const radius=6*(perspective?p.scale:field.width/W);
+    ctx.strokeStyle='rgba(157,48,33,'+Math.min(.8,(patch.until-world.time)/9)+')';
+    ctx.lineWidth=1.5*field.width/field.clientWidth/camera.zoom;
+    ctx.beginPath();ctx.ellipse(p.x,p.y,radius,radius*(perspective ? .55 : 1),0,0,TAU);ctx.stroke();
+  }
   for(const e of encountersOnMap){
     if(world.time-e.time>18)continue;
     const p=perspective?project(e.x,e.y):{x:e.x/W*field.width,y:e.y/H*field.height};
