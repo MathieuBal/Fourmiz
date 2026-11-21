@@ -36,7 +36,7 @@ summary{min-height:44px;align-content:center;font-weight:650}details.panel{paddi
 <section id="underground" hidden aria-label="Coupe de la fourmilière"><div class="buttons" id="nestPicker"><button id="ochre">Nid ocre</button><button id="blue">Nid bleu</button></div><canvas id="sectionView" width="720" height="420" aria-label="Chambres du nid"></canvas><p id="chambers"></p></section></figure>
 <div id="surfaceControls" class="inspector"><label class="tool">Sur le terrain<select id="tool"><optgroup label="Observation"><option value="follow">Suivre une ouvrière</option><option value="pan">Déplacer la vue</option></optgroup><optgroup label="Modifier le terrain"><option value="seeds">Déposer des graines</option><option value="wall">Tracer un mur</option><option value="erase">Effacer un mur</option></optgroup></select></label>
 <button id="feed" hidden>Disperser 25 graines</button><p id="hint">Touche une ouvrière pour suivre son activité.</p><div id="observer" hidden><strong id="workerName"></strong><span id="workerAction"></span><span id="workerReason" class="detail"></span></div><p role="status" id="status"></p>
-<p id="mapKey" hidden>Ocre et bleu · passages récents. Violet · zone partagée. Croix · confrontation. Cercle rouge · tensions répétées.</p></div></section>
+<p id="mapKey" hidden>Ocre et bleu · présence des colonies. Couleur vive · passage récent de porteuses. Teinte pâle · présence sans transport récent. Violet · zone partagée. Croix · confrontation. Cercle rouge · tensions répétées.</p></div></section>
 <aside><section class="panel"><h2>Colonies</h2><table aria-label="État des colonies"><thead><tr><th scope="col">Indicateur</th><th scope="col">Ocre</th><th scope="col" class="duelOnly">Bleue</th></tr></thead><tbody><tr><th scope="row">Ouvrières</th><td id="population0"></td><td class="duelOnly" id="population1"></td></tr><tr><th scope="row">Graines en réserve</th><td id="reserve0"></td><td class="duelOnly" id="reserve1"></td></tr><tr><th scope="row">Œufs</th><td id="eggs0"></td><td class="duelOnly" id="eggs1"></td></tr><tr><th scope="row">Larves</th><td id="larvae0"></td><td class="duelOnly" id="larvae1"></td></tr></tbody></table></section>
 <details class="panel" id="display"><summary>Affichage et caméra</summary><div class="buttons"><button id="territory" aria-pressed="false">Territoires</button><button id="trails" aria-pressed="true">Pistes</button><button id="relief" aria-pressed="true">Vue 3D</button><button id="zoom">Zoom ×2</button><button id="watch" hidden>Voir une confrontation</button></div></details>
 <details class="panel"><summary>Bilan de la simulation</summary><div class="detail"><p id="vitalStats"></p><p id="rivalStats" hidden></p><p id="nestStats" hidden></p><p id="raidStats" hidden></p><button id="watchPile" hidden>Observer le tas disputé</button></div></details></aside></div></main>
@@ -78,6 +78,7 @@ const activityReason={
   'Cherche un passage':'Les murs bloquent le chemin vers sa destination.',
   'Menace mandibules ouvertes':'Une ouvrière rivale est au contact.',
   'Lutte au contact':'La rencontre avec sa rivale a dégénéré.',
+  'Reprend un détour éprouvé':'Elle rejoint un passage par lequel elle a déjà rapporté une graine de cette source.',
   'Contourne une zone disputée':'Des confrontations ou des replis se sont répétés sur ce passage.',
   'Patrouille à l’entrée':'Des contacts répétés près du nid la retiennent à l’entrée.',
   'Surveille une intruse':'Une rivale est visible aux abords de l’entrée.',
@@ -114,6 +115,7 @@ function colony(random=Math.random,team=0){
   const ants=[], food=ground.food, brood=[], scent=new Float32Array(W*H);
   workforces[team]=ants;
   const visits=new Float32Array(territoryCols*territoryRows);
+  const recentTraffic=new Float32Array(visits.length);
   const deaths={âge:0,faim:0,combat:0};
   let nextBroodId=1,nextId=1,consumed=0,nextMeal=1;
   let reserve=8,time=0,nextEgg=8,decay=0;
@@ -255,6 +257,14 @@ function colony(random=Math.random,team=0){
   }
   function finishTrip(ant){
     ant.deliveries++;
+    if(ant.crossedDetour && ant.memory){
+      const previous=ant.safePassage;
+      const p=ant.crossedDetour;
+      const repeated=previous && previous.source===ant.memory && previous.until>time &&
+        Math.hypot(previous.x-p.x,previous.y-p.y)<4;
+      ant.safePassage={x:p.x,y:p.y,source:ant.memory,until:time+60,confirmed:!!repeated};
+    }
+    ant.crossedDetour=null;
     if(ant.memory){
       ant.memory.delivered??=[0,0];
       ant.memory.delivered[team]++;
@@ -267,7 +277,7 @@ function colony(random=Math.random,team=0){
     ant.homeward=null;
     ant.urge=time+30+Math.min(ant.visits,5)*12;
     const fidelity=.65+.27*(1-Math.exp(-ant.visits/1.8));
-    ant.cursor=random()<fidelity?0:ant.route.length;
+    ant.cursor=random()<fidelity || (ant.safePassage?.source===ant.memory && ant.safePassage?.until>time)?0:ant.route.length;
     ant.searchUntil=0;
   }
   function recall(ant,dt){
@@ -303,7 +313,10 @@ function colony(random=Math.random,team=0){
     ant.tripMarks.set(i,marked+length);
     const trafficFactor=.35+.65/(1+ant.encounters*.42);
     const dose=.92*length*Math.exp(-ant.tripDistance/markingRange)*trafficFactor;
-    deposit(i,dose,(oldX-ant.x)/step,(oldY-ant.y)/step);
+    const passage=ant.safePassage;
+    const familiar=passage?.confirmed && passage.until>time && passage.source===ant.memory &&
+      Math.hypot(ant.x-passage.x,ant.y-passage.y)<4;
+    deposit(i,familiar?dose*1.35:dose,(oldX-ant.x)/step,(oldY-ant.y)/step);
   }
   function readTrail(ant){
     let vx=0,vy=0,total=0;
@@ -373,6 +386,7 @@ function colony(random=Math.random,team=0){
       const d=ant.detour;
       if(time<d.until && time<d.patch.until && Math.hypot(ant.x-d.x,ant.y-d.y)>1.5 &&
         clearSegment(ant,d))return d;
+      if(ant.load && Math.hypot(ant.x-d.x,ant.y-d.y)<=1.5)ant.crossedDetour={x:ant.x,y:ant.y};
       ant.detour=null;
     }
     const hx=Math.cos(ant.a),hy=Math.sin(ant.a);
@@ -705,7 +719,16 @@ function colony(random=Math.random,team=0){
     const goal=chooseForagingGoal(ant,dist);
     if(goal===NEST){
       ant.activity='Rapporte une graine';
-      routeTo(ant,NEST,dt);
+      const p=ant.safePassage;
+      if(p && p.source===ant.memory && p.until>time && !ant.crossedDetour &&
+        dist>Math.hypot(p.x-NEST.x,p.y-NEST.y)-1 && Math.hypot(p.x-ant.x,p.y-ant.y)<14 && clearSegment(ant,p)){
+        if(Math.hypot(p.x-ant.x,p.y-ant.y)<2)ant.crossedDetour=p;
+        else{
+          ant.activity='Reprend un détour éprouvé';
+          routeTo(ant,p,dt);
+        }
+      }
+      if(ant.activity==='Rapporte une graine')routeTo(ant,NEST,dt);
       if(dist<=dropRadius){
         reserve++;ant.load=false;ant.tripMarks=null;finishTrip(ant);leaveNest(ant);
         ant.activity=ant.exit?'Libère l’entrée du nid':'S’éloigne du nid';
@@ -766,10 +789,14 @@ function colony(random=Math.random,team=0){
           if(time>=contestedPatches[i].until)contestedPatches.splice(i,1);
         }
       }
-      for(let i=0;i<visits.length;i++)visits[i]*=.967;
+      for(let i=0;i<visits.length;i++){
+        visits[i]*=.967;
+        recentTraffic[i]*=.78;
+      }
       for(const a of ants)if(!a.inside){
         const i=Math.floor(a.x/4)+territoryCols*Math.floor(a.y/4);
         visits[i]=Math.min(24,visits[i]+1);
+        if(a.load)recentTraffic[i]=Math.min(8,recentTraffic[i]+1);
       }}
     for(let i=ants.length-1;i>=0;i--){
       const a=ants[i];
@@ -867,7 +894,7 @@ function colony(random=Math.random,team=0){
       }
     }
   }
-  return {ants,food,brood,visits,deaths,get nestRaid(){return nestRaid},get nestAttacks(){return nestAttacks},get divertedCarriers(){return divertedCarriers},get offensive(){return offensive},get lastOffensive(){return lastOffensive},get consumed(){return consumed},scent,seeds,tick,walls,paint,center,get clashes(){return clashes},get time(){return time},get reserve(){return reserve}};
+  return {ants,food,brood,visits,recentTraffic,deaths,get nestRaid(){return nestRaid},get nestAttacks(){return nestAttacks},get divertedCarriers(){return divertedCarriers},get offensive(){return offensive},get lastOffensive(){return lastOffensive},get consumed(){return consumed},scent,seeds,tick,walls,paint,center,get clashes(){return clashes},get time(){return time},get reserve(){return reserve}};
 }
 </script>
 <script>
@@ -995,7 +1022,8 @@ function drawTerritory(perspective){
       const shared=Math.min(a,b)>.25*Math.max(a,b);
       const rgb=shared?[138,59,145]:a>b?[190,95,28]:[31,106,168];
       heatPixels.data.set(rgb,j);
-      heatPixels.data[j+3]=155*Math.min(1,(a+b)/3);
+      const traffic=world.recentTraffic[i]+(rival?.recentTraffic[i]||0);
+      heatPixels.data[j+3]=85*Math.min(1,(a+b)/3)+135*Math.min(1,traffic/3);
     }
     heatCtx.putImageData(heatPixels,0,0);
   }

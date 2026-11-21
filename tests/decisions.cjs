@@ -9,7 +9,7 @@ const engine = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
   .find(match => match[1].includes('function colony('))[1];
 
 function loadWorld(duel) {
-  return runInNewContext(engine + '\n;({ colony, activityReason, trailActivity, assessEncounter, recordEncounter, ground, W, STEP })', {
+  return runInNewContext(engine + '\n;({ colony, activityReason, trailActivity, assessEncounter, recordEncounter, contestedPatches, ground, W, STEP })', {
     location: { search: '?duel=' + Number(duel) },
     URLSearchParams
   });
@@ -127,7 +127,7 @@ test('une confrontation recrute une voisine, puis son alarme expire', () => {
 
 test('deux passages : détour après des rencontres répétées et retour après dissipation', () => {
   function trip(events, elapsed = 0, alternative = true) {
-    const { colony, recordEncounter, ground, W, STEP } = loadWorld(true);
+    const { colony, recordEncounter, contestedPatches:worldPatches, ground, W, STEP } = loadWorld(true);
     const c = colony(() => .5, 0);
     const ant = c.ants[0];
     c.ants.splice(1);
@@ -142,6 +142,8 @@ test('deux passages : détour après des rencontres répétées et retour après
     for (const bucket of ground.buckets) bucket.clear();
     Object.assign(ant, { x: 82, y: 90, a: Math.PI, load: true, homeward: [], tripMarks: new Map(), tripDistance: 0 });
     ground.buckets[Math.floor(ant.y / 4) * Math.ceil(W / 4) + Math.floor(ant.x / 4)].add(ant);
+    c.seeds(82,90,10);
+    ant.memory=c.food.find(f=>f.x===82 && f.y===90);
     let crossing, detoured = false;
     const deliveries = ant.deliveries;
     for (let i = 0; i < 600 && ant.deliveries === deliveries; i++) {
@@ -150,13 +152,32 @@ test('deux passages : détour après des rencontres répétées et retour après
       if (crossing === undefined && ant.x < 72) crossing = ant.y;
     }
     assert.equal(ant.deliveries, deliveries + 1);
-    return { crossing, detoured };
+    const passage=ant.safePassage;
+    if(passage){
+      // Replay a pickup from the same pile after the public danger signal disappears.
+      worldPatches.length=0;
+      for(const bucket of ground.buckets)bucket.delete(ant);
+      Object.assign(ant,{x:82,y:90,a:Math.PI,load:true,homeward:[],tripMarks:new Map(),tripDistance:0});
+      ground.buckets[Math.floor(90/4)*Math.ceil(W/4)+Math.floor(82/4)].add(ant);
+      let recalled=false,secondCrossing;
+      for(let i=0;i<600 && ant.deliveries===deliveries+1;i++){
+        c.tick(STEP);
+        recalled ||= ant.activity==='Reprend un détour éprouvé';
+        if(secondCrossing===undefined && ant.x<72)secondCrossing=ant.y;
+      }
+      assert.ok(recalled && secondCrossing>94);
+      assert.equal(ant.deliveries,deliveries+2);
+      assert.ok(ant.safePassage.confirmed);
+    }
+    return { crossing, detoured, passage };
   }
   const quiet = trip(0), single = trip(1), disputed = trip(2), reopened = trip(2, 37);
   const onlyOpening = trip(2, 0, false);
   assert.ok(onlyOpening.crossing < 94);
   assert.ok(quiet.crossing < 94 && single.crossing < 94);
   assert.ok(disputed.detoured && disputed.crossing > 96, JSON.stringify(disputed));
+  assert.ok(disputed.passage && disputed.passage.y>94, JSON.stringify(disputed));
+  assert.equal(quiet.passage, undefined);
   assert.ok(!reopened.detoured && reopened.crossing < 94);
 });
 
