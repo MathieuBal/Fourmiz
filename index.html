@@ -27,6 +27,7 @@ const nests=duel?[{x:160-nestOffset,y:90},{x:160+nestOffset,y:90}]:[NEST];
 const territoryCols=Math.ceil(W/4),territoryRows=Math.ceil(H/4);
 const encountersOnMap=[];
 const contestedPatches=[];
+const workforces=[];
 function recordPressure(x,y,time){
   // Keep only fresh evidence. A single encounter cannot close a passage.
   const patch=contestedPatches.find(p=>time<p.until && Math.hypot(p.x-x,p.y-y)<9);
@@ -84,6 +85,7 @@ function assessEncounter(worker,nearbyWorkers,home){
 function colony(random=Math.random,team=0){
   const NEST=nests[team];
   const ants=[], food=ground.food, brood=[], scent=new Float32Array(W*H);
+  workforces[team]=ants;
   const visits=new Float32Array(territoryCols*territoryRows);
   const deaths={âge:0,faim:0,combat:0};
   let nextBroodId=1,nextId=1,consumed=0,nextMeal=1;
@@ -393,29 +395,41 @@ function colony(random=Math.random,team=0){
   if(!duel){seeds(148,39,110);seeds(43,104,80);seeds(168,112,90);}
   else if(team===0){seeds(160,90,160);seeds(106,72,75);seeds(214,108,75);}
   let clashes=0;
+  function guardCapacity(population){
+    return Math.min(2,Math.floor(population/5));
+  }
   function rememberIntrusion(worker,enemy){
     const home=nests[worker.team];
     if(Math.hypot(worker.x-home.x,worker.y-home.y)>14)return;
-    if(!worker.load && time<worker.lastIntrusion+32){
-      worker.guardUntil=time+24;
-      worker.guardBearing=Math.atan2(enemy.y-home.y,enemy.x-home.x);
-      worker.guardSide=worker.id%2?1:-1;
-    }
+    const repeated=time<worker.lastIntrusion+32;
     worker.lastIntrusion=time;
+    if(!repeated || worker.load)return;
+    if(time<worker.guardUntil){
+      worker.guardUntil=time+24;
+      return;
+    }
+    const colonyWorkers=workforces[worker.team];
+    const guards=colonyWorkers.filter(a=>time<a.guardUntil);
+    if(guards.length>=guardCapacity(colonyWorkers.length))return;
+    const bearing=Math.atan2(enemy.y-home.y,enemy.x-home.x);
+    if(guards.some(a=>Math.cos(a.guardBearing-bearing)>.000001))return;
+    worker.guardUntil=time+24;
+    worker.guardBearing=bearing;
+    worker.guardSide=worker.id%2?1:-1;
   }
   function guardEntrance(ant,local,dt){
     if(!(time<ant.guardUntil) || ant.load || ant.inside)return false;
     const intruder=local.find(b=>b.team!==team && !b.returning &&
       Math.hypot(b.x-NEST.x,b.y-NEST.y)<11 &&
       Math.hypot(b.x-ant.x,b.y-ant.y)<4 && clearSegment(ant,b));
-    if(intruder){
+    if(intruder && Math.hypot(ant.x-NEST.x,ant.y-NEST.y)>dropRadius+1.5){
       ant.activity='Surveille une intruse';
       ant.a=Math.atan2(intruder.y-ant.y,intruder.x-ant.x);
       return 'pause';
     }
     ant.activity='Patrouille à l’entrée';
-    const bearing=ant.guardBearing+ant.guardSide*.65;
-    const post={x:NEST.x+7*Math.cos(bearing),y:NEST.y+7*Math.sin(bearing)};
+    const bearing=ant.guardBearing+ant.guardSide*.35;
+    const post={x:NEST.x+10*Math.cos(bearing),y:NEST.y+10*Math.sin(bearing)};
     if(!openGround(post.x,post.y) || Math.hypot(ant.x-post.x,ant.y-post.y)<1.7){
       ant.guardSide*=-1;
       return 'pause';
@@ -512,6 +526,10 @@ function colony(random=Math.random,team=0){
     buckets[bucket(ant.x,ant.y)].delete(ant);
     if(ant.load)seeds(ant.x,ant.y,1);
     ants.splice(index,1);
+    if(guardCapacity(ants.length)<guardCapacity(ants.length+1)){
+      const guards=ants.filter(a=>time<a.guardUntil);
+      for(const surplus of guards.slice(guardCapacity(ants.length)))surplus.guardUntil=time;
+    }
     if(!ants.length)brood.length=0;
   }
   // A seed represents divisible food. Rates and times are compressed for the demo.
@@ -682,6 +700,7 @@ function colony(random=Math.random,team=0){
       for(const offset of angles){
         const heading=ant.a+offset;
         nx=ant.x+Math.cos(heading)*step;ny=ant.y+Math.sin(heading)*step;
+        if(ant.activity==='Patrouille à l’entrée' && Math.hypot(nx-NEST.x,ny-NEST.y)<Math.min(dist,dropRadius+1.5))continue;
         if(!openGround(nx,ny)||!clearBody(nx,ny,local,ant))continue;
         ant.a+=clamp(offset,-6*dt,6*dt);
         if(offset)ant.passSide=Math.sign(offset);
